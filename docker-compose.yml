@@ -1,0 +1,227 @@
+version: '3.8'
+
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "nats", "server", "check", "--server", "nats://localhost:4222"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: lameness_db
+      POSTGRES_USER: lameness_user
+      POSTGRES_PASSWORD: lameness_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lameness_user"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:6333/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  video-ingestion:
+    build:
+      context: .
+      dockerfile: services/video-ingestion/Dockerfile
+    volumes:
+      - ./data/videos:/app/data/videos
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+
+  video-preprocessing:
+    build:
+      context: .
+      dockerfile: services/video-preprocessing/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - video-ingestion
+
+  yolo-pipeline:
+    build:
+      context: .
+      dockerfile: services/yolo-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - video-preprocessing
+
+  sam3-pipeline:
+    build:
+      context: .
+      dockerfile: services/sam3-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - video-preprocessing
+
+  dinov3-pipeline:
+    build:
+      context: .
+      dockerfile: services/dinov3-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - nats
+      - qdrant
+      - video-preprocessing
+
+  tleap-pipeline:
+    build:
+      context: .
+      dockerfile: services/tleap-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - video-preprocessing
+
+  ml-pipeline:
+    build:
+      context: .
+      dockerfile: services/ml-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+    depends_on:
+      - nats
+      - postgres
+      - yolo-pipeline
+      - sam3-pipeline
+      - dinov3-pipeline
+      - tleap-pipeline
+
+  fusion-service:
+    build:
+      context: .
+      dockerfile: services/fusion-service/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - ml-pipeline
+
+  shap-service:
+    build:
+      context: .
+      dockerfile: services/shap-service/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - fusion-service
+
+  training-service:
+    build:
+      context: .
+      dockerfile: services/training-service/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+    depends_on:
+      - nats
+      - postgres
+
+  admin-backend:
+    build:
+      context: .
+      dockerfile: services/admin-interface/backend/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+      - QDRANT_URL=http://qdrant:6333
+    depends_on:
+      - nats
+      - postgres
+      - qdrant
+      - fusion-service
+    ports:
+      - "8000:8000"
+
+  admin-frontend:
+    build:
+      context: .
+      dockerfile: services/admin-interface/frontend/Dockerfile
+    volumes:
+      - ./services/admin-interface/frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - admin-backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  nats-data:
+  postgres-data:
+  qdrant-data:
+

@@ -1,2 +1,63 @@
 research/
 
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+# Conda
+.conda/
+
+# Data
+data/videos/*
+data/processed/*
+data/training/*
+data/results/*
+!data/videos/.gitkeep
+!data/processed/.gitkeep
+!data/training/.gitkeep
+!data/results/.gitkeep
+
+# Models
+shared/models/*
+!shared/models/.gitkeep
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db

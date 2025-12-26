@@ -1,0 +1,55 @@
+# Shared configuration for all services
+
+nats:
+  url: ${NATS_URL:-nats://localhost:4222}
+  subjects:
+    video_uploaded: "video.uploaded"
+    video_preprocessed: "video.preprocessed"
+    pipeline_yolo: "pipeline.yolo"
+    pipeline_sam3: "pipeline.sam3"
+    pipeline_dinov3: "pipeline.dinov3"
+    pipeline_tleap: "pipeline.tleap"
+    pipeline_ml: "pipeline.ml"
+    pipeline_gnn: "pipeline.gnn"
+    pipeline_fusion: "pipeline.fusion"
+    analysis_complete: "analysis.complete"
+    training_data_added: "training.data.added"
+    training_yolo_requested: "training.yolo.requested"
+    training_ml_requested: "training.ml.requested"
+    training_completed: "training.completed"
+
+database:
+  url: ${POSTGRES_URL:-postgresql://lameness_user:lameness_pass@localhost:5432/lameness_db}
+  pool_size: 10
+  max_overflow: 20
+
+qdrant:
+  url: ${QDRANT_URL:-http://localhost:6333}
+  collection_name: "cow_embeddings"
+
+data:
+  videos_dir: "data/videos"
+  processed_dir: "data/processed"
+  training_dir: "data/training"
+  results_dir: "data/results"
+
+models:
+  yolo:
+    weights_path: "shared/models/yolo"
+    confidence_threshold: 0.5
+  sam3:
+    checkpoint_path: "shared/models/sam3"
+  dinov3:
+    model_name: "facebook/dinov2-base"
+  tleap:
+    checkpoint_path: "shared/models/tleap"
+
+training:
+  yolo:
+    min_new_frames: 100
+    batch_size: 16
+    epochs: 100
+  ml:
+    min_new_videos: 50
+    cv_folds: 5
+
