@@ -324,3 +324,76 @@ export const pipelineResultsApi = {
     return response.data
   },
 }
+
+// Elo Ranking / Hierarchy endpoints (based on research paper methodology)
+export const eloRankingApi = {
+  // Submit a pairwise comparison with Elo update
+  submitComparison: async (
+    videoId1: string,
+    videoId2: string,
+    winner: number,
+    degree: number = 1,
+    confidence: string = 'confident',
+    rawScore?: number
+  ) => {
+    const response = await apiClient.post('/api/elo/comparison', {
+      video_id_1: videoId1,
+      video_id_2: videoId2,
+      winner,
+      degree,
+      confidence,
+      raw_score: rawScore,
+    })
+    return response.data
+  },
+
+  // Get full hierarchy with Elo ratings and David's Scores
+  getHierarchy: async () => {
+    const response = await apiClient.get('/api/elo/hierarchy')
+    return response.data
+  },
+
+  // Get next pair to compare (intelligent selection)
+  getNextPair: async () => {
+    const response = await apiClient.get('/api/elo/next-pair')
+    return response.data
+  },
+
+  // Get comprehensive stats
+  getStats: async () => {
+    const response = await apiClient.get('/api/elo/stats')
+    return response.data
+  },
+
+  // Create a hierarchy snapshot
+  createSnapshot: async (name: string, description?: string) => {
+    const response = await apiClient.post('/api/elo/snapshot', null, {
+      params: { name, description }
+    })
+    return response.data
+  },
+
+  // List all snapshots
+  getSnapshots: async () => {
+    const response = await apiClient.get('/api/elo/snapshots')
+    return response.data
+  },
+
+  // Get a specific snapshot
+  getSnapshot: async (snapshotId: string) => {
+    const response = await apiClient.get(`/api/elo/snapshot/${snapshotId}`)
+    return response.data
+  },
+
+  // Get video Elo history
+  getVideoHistory: async (videoId: string) => {
+    const response = await apiClient.get(`/api/elo/video/${videoId}/history`)
+    return response.data
+  },
+
+  // Recalculate all ratings from scratch
+  recalculateRatings: async () => {
+    const response = await apiClient.post('/api/elo/recalculate')
+    return response.data
+  },
+}

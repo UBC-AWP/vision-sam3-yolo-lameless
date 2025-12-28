@@ -143,6 +143,74 @@ class ServiceHeartbeat(Base):
     extra_data = Column(Text, nullable=True)  # JSON string for extra info
 
 
+class VideoEloRating(Base):
+    """Elo rating for each video in the lameness hierarchy"""
+    __tablename__ = "video_elo_ratings"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    video_id = Column(String(100), unique=True, nullable=False, index=True)
+    elo_rating = Column(Float, default=1500.0)
+    elo_uncertainty = Column(Float, default=350.0)  # Rating deviation (like Glicko)
+    wins = Column(Integer, default=0)
+    losses = Column(Integer, default=0)
+    ties = Column(Integer, default=0)
+    total_comparisons = Column(Integer, default=0)
+    win_probability = Column(Float, default=0.5)  # Cumulative win probability
+    normalized_score = Column(Float, nullable=True)  # David's score normalized 0-1
+    rank_position = Column(Integer, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class PairwiseComparison(Base):
+    """Individual pairwise comparison record"""
+    __tablename__ = "pairwise_comparisons"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    video_id_1 = Column(String(100), nullable=False, index=True)
+    video_id_2 = Column(String(100), nullable=False, index=True)
+    winner = Column(Integer, nullable=False)  # 1, 2, or 0 (tie)
+    degree = Column(Integer, default=1)  # Strength of preference (0-3)
+    confidence = Column(String(20), default="confident")
+    rater_id = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    rater_weight = Column(Float, default=1.0)  # Weight based on rater tier
+    is_gold_task = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    __table_args__ = (
+        CheckConstraint("winner IN (0, 1, 2)", name="valid_comparison_winner"),
+        CheckConstraint("degree >= 0 AND degree <= 3", name="valid_degree"),
+    )
+
+
+class EloHistory(Base):
+    """Historical Elo rating snapshots for trend analysis"""
+    __tablename__ = "elo_history"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    video_id = Column(String(100), nullable=False, index=True)
+    elo_rating = Column(Float, nullable=False)
+    comparison_count = Column(Integer, nullable=False)
+    recorded_at = Column(DateTime, default=datetime.utcnow)
+
+
+class HierarchySnapshot(Base):
+    """Snapshot of full hierarchy for reproducibility"""
+    __tablename__ = "hierarchy_snapshots"
+
+    id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    name = Column(String(100), nullable=False)
+    description = Column(Text, nullable=True)
+    total_videos = Column(Integer, nullable=False)
+    total_comparisons = Column(Integer, nullable=False)
+    steepness = Column(Float, nullable=True)  # Hierarchy steepness metric
+    steepness_std = Column(Float, nullable=True)
+    inter_rater_reliability = Column(Float, nullable=True)  # ICC value
+    ranking_data = Column(Text, nullable=False)  # JSON of full ranking
+    created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 # ============== DATABASE FUNCTIONS ==============
 
 async def get_db() -> AsyncSession:

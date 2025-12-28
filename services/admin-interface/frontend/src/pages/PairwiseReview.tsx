@@ -1,6 +1,6 @@
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { trainingApi, videosApi } from '@/api/client'
+import { videosApi, eloRankingApi } from '@/api/client'
 
 interface VideoPair {
   video_id_1: string
@@ -82,7 +82,8 @@ export default function PairwiseReview() {
     setLoading(true)
     setSelectedValue(null)
     try {
-      const data = await trainingApi.getNextPairwise()
+      // Use Elo API for intelligent pair selection
+      const data = await eloRankingApi.getNextPair()
       setPair(data)
     } catch (error) {
       console.error('Failed to load pair:', error)
@@ -93,12 +94,13 @@ export default function PairwiseReview() {
 
   const loadStats = async () => {
     try {
-      const [statsData, rankingData] = await Promise.all([
-        trainingApi.getPairwiseStats(),
-        trainingApi.getPairwiseRanking()
+      // Use Elo API for stats and hierarchy
+      const [statsData, hierarchyData] = await Promise.all([
+        eloRankingApi.getStats(),
+        eloRankingApi.getHierarchy()
       ])
       setStats(statsData)
-      setRanking(rankingData)
+      setRanking(hierarchyData)
     } catch (error) {
       console.error('Failed to load stats:', error)
     }
@@ -134,29 +136,35 @@ export default function PairwiseReview() {
 
     setSubmitting(true)
     try {
-      // Convert 7-point scale to winner format for API
+      // Convert 7-point scale to winner format and degree for Elo API
       let winner: number
-      let strength: string
-      
+      let degree: number
+      let confidence: string
+
       if (selectedValue < 0) {
-        winner = 1 // Video A wins
-        strength = Math.abs(selectedValue) === 3 ? 'very_confident' : 
-                   Math.abs(selectedValue) === 2 ? 'confident' : 'uncertain'
+        winner = 1 // Video A is more lame (wins in lameness hierarchy)
+        degree = Math.abs(selectedValue) // 1, 2, or 3
+        confidence = Math.abs(selectedValue) === 3 ? 'very_confident' :
+                     Math.abs(selectedValue) === 2 ? 'confident' : 'uncertain'
       } else if (selectedValue > 0) {
-        winner = 2 // Video B wins
-        strength = selectedValue === 3 ? 'very_confident' :
-                   selectedValue === 2 ? 'confident' : 'uncertain'
+        winner = 2 // Video B is more lame
+        degree = selectedValue // 1, 2, or 3
+        confidence = selectedValue === 3 ? 'very_confident' :
+                     selectedValue === 2 ? 'confident' : 'uncertain'
       } else {
-        winner = 0 // Tie
-        strength = 'uncertain'
+        winner = 0 // Tie - cannot decide
+        degree = 0
+        confidence = 'uncertain'
       }
 
-      await trainingApi.submitPairwise(
+      // Submit to Elo ranking system with degree of preference
+      await eloRankingApi.submitComparison(
         pair.video_id_1,
         pair.video_id_2,
         winner,
-        strength,
-        selectedValue // Also send raw score
+        degree,
+        confidence,
+        selectedValue // Raw score for additional analysis
       )
       await loadStats()
       await loadNextPair()
@@ -394,8 +402,8 @@ export default function PairwiseReview() {
         <div className="flex items-center gap-4">
           {stats && (
             <div className="text-sm text-muted-foreground">
-              Progress: {stats.pairs_compared} / {stats.total_possible_pairs} pairs
-              ({((stats.pairs_compared / stats.total_possible_pairs) * 100).toFixed(1)}%)
+              Progress: {stats.unique_pairs_compared} / {stats.total_possible_pairs} pairs
+              ({(stats.completion_rate * 100).toFixed(1)}%)
             </div>
           )}
           <button
@@ -429,7 +437,7 @@ export default function PairwiseReview() {
         <div className="w-full bg-gray-200 rounded-full h-2">
           <div
             className="bg-primary h-2 rounded-full transition-all"
-            style={{ width: `${(stats.pairs_compared / stats.total_possible_pairs) * 100}%` }}
+            style={{ width: `${stats.completion_rate * 100}%` }}
           />
         </div>
       )}
@@ -437,12 +445,26 @@ export default function PairwiseReview() {
       {/* Ranking Panel */}
       {showRanking && ranking && (
         <div className="border rounded-lg p-6">
-          <h3 className="text-lg font-semibold mb-4">Lameness Ranking (Elo-based)</h3>
-          <p className="text-sm text-muted-foreground mb-4">
-            Higher Elo = More Lame. Based on {ranking.total_comparisons} comparisons.
-          </p>
+          <div className="flex justify-between items-start mb-4">
+            <div>
+              <h3 className="text-lg font-semibold">Lameness Hierarchy (EloSteepness)</h3>
+              <p className="text-sm text-muted-foreground">
+                Higher Elo = More Lame. Based on {ranking.total_comparisons} comparisons.
+              </p>
+            </div>
+            {ranking.metrics && (
+              <div className="text-right text-sm">
+                <div className="font-medium">
+                  Steepness: {(ranking.metrics.steepness * 100).toFixed(1)}%
+                </div>
+                <div className="text-muted-foreground">
+                  {ranking.metrics.hierarchy_linearity} hierarchy
+                </div>
+              </div>
+            )}
+          </div>
           <div className="grid gap-2 max-h-64 overflow-y-auto">
-            {ranking.ranking.map((item: any) => (
+            {ranking.ranking?.map((item: any) => (
               <div
                 key={item.video_id}
                 className="flex items-center justify-between p-2 bg-gray-50 rounded"
@@ -452,16 +474,29 @@ export default function PairwiseReview() {
                     {item.rank}
                   </span>
                   <span className="font-mono text-sm">{item.video_id.slice(0, 8)}...</span>
+                  <span className="text-xs text-muted-foreground">
+                    W:{item.wins} L:{item.losses}
+                  </span>
                 </div>
-                <div className={`font-medium ${
-                  item.elo_rating > 1550 ? 'text-red-600' :
-                  item.elo_rating < 1450 ? 'text-green-600' : 'text-gray-600'
-                }`}>
-                  {item.elo_rating} Elo
+                <div className="flex items-center gap-3">
+                  <div className="text-xs text-muted-foreground">
+                    ±{item.elo_uncertainty?.toFixed(0) || '?'}
+                  </div>
+                  <div className={`font-medium ${
+                    item.elo_rating > 1550 ? 'text-red-600' :
+                    item.elo_rating < 1450 ? 'text-green-600' : 'text-gray-600'
+                  }`}>
+                    {item.elo_rating?.toFixed(0) || 1500} Elo
+                  </div>
                 </div>
               </div>
             ))}
           </div>
+          {ranking.ranking?.length === 0 && (
+            <p className="text-center text-muted-foreground py-4">
+              No comparisons yet. Start comparing videos to build the hierarchy.
+            </p>
+          )}
         </div>
       )}
 
