@@ -12,7 +12,7 @@ import traceback
 import logging
 
 from app.routers import videos, analysis, training, models, shap
-from app.routers import auth, pipeline, health
+from app.routers import auth, pipeline, health, ml_config
 from app.database import init_db, close_db
 from app.websocket.handler import ws_manager, websocket_endpoint
 
@@ -71,6 +71,7 @@ app.include_router(models.router, prefix="/api/models", tags=["models"])
 app.include_router(shap.router, prefix="/api/shap", tags=["shap"])
 app.include_router(pipeline.router, prefix="/api/pipeline", tags=["pipeline"])
 app.include_router(health.router, prefix="/api/health", tags=["health"])
+app.include_router(ml_config.router, prefix="/api/ml-config", tags=["ml-config"])
 
 
 # ============== WEBSOCKET ENDPOINTS ==============

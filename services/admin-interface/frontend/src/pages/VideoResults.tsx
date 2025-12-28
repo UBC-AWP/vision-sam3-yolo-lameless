@@ -294,33 +294,242 @@ export default function VideoResults() {
   )
 
   const renderMlResults = (data: any) => {
-    const ensemble = data.ensemble || {}
+    const predictions = data.predictions || {}
+    const ensemble = predictions.ensemble || data.ensemble || {}
+    const catboost = predictions.catboost || {}
+    const xgboost = predictions.xgboost || {}
+    const lightgbm = predictions.lightgbm || {}
+    const features = data.features || []
+    const featureNames = data.feature_names || []
+
     return (
-      <div className="space-y-4">
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <div className="bg-muted/50 rounded-lg p-4">
-            <div className="text-sm text-muted-foreground">Ensemble Probability</div>
-            <div className={`text-2xl font-bold ${(ensemble.probability || 0) > 0.5 ? 'text-red-500' : 'text-green-500'}`}>
+      <div className="space-y-6">
+        {/* Ensemble Result - Featured */}
+        <div className="bg-gradient-to-br from-primary/10 to-primary/5 rounded-xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <h3 className="font-semibold text-lg">Ensemble Prediction</h3>
+            <span className={`px-3 py-1 rounded-full text-sm font-medium ${
+              ensemble.prediction === 1
+                ? 'bg-red-100 text-red-700'
+                : 'bg-green-100 text-green-700'
+            }`}>
+              {ensemble.prediction === 1 ? 'LAME' : 'HEALTHY'}
+            </span>
+          </div>
+          <div className="flex items-center gap-4">
+            <div className="flex-1">
+              <div className="h-6 bg-gray-200 rounded-full overflow-hidden">
+                <div
+                  className={`h-full transition-all ${
+                    (ensemble.probability || 0) > 0.5 ? 'bg-red-500' : 'bg-green-500'
+                  }`}
+                  style={{ width: `${(ensemble.probability || 0) * 100}%` }}
+                />
+              </div>
+            </div>
+            <div className="text-2xl font-bold w-24 text-right">
               {((ensemble.probability || 0) * 100).toFixed(1)}%
             </div>
           </div>
-          <div className="bg-muted/50 rounded-lg p-4">
-            <div className="text-sm text-muted-foreground">Prediction</div>
-            <div className={`text-2xl font-bold ${ensemble.prediction === 1 ? 'text-red-500' : 'text-green-500'}`}>
-              {ensemble.prediction === 1 ? 'Lame' : 'Healthy'}
+        </div>
+
+        {/* Individual Model Results */}
+        <div>
+          <h3 className="font-semibold mb-3">Individual Model Predictions</h3>
+          <div className="grid md:grid-cols-3 gap-4">
+            {/* CatBoost */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 bg-blue-500 rounded" />
+                <span className="font-medium">CatBoost</span>
+                {ensemble.weights?.catboost && (
+                  <span className="text-xs bg-blue-100 text-blue-700 px-2 py-0.5 rounded ml-auto">
+                    {((ensemble.weights.catboost) * 100).toFixed(0)}% weight
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Probability</span>
+                  <span className={`font-medium ${
+                    (catboost.probability || 0) > 0.5 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {catboost.probability !== undefined
+                      ? `${(catboost.probability * 100).toFixed(1)}%`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${(catboost.probability || 0) > 0.5 ? 'bg-red-400' : 'bg-green-400'}`}
+                    style={{ width: `${(catboost.probability || 0) * 100}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Prediction</span>
+                  <span className={`font-medium ${
+                    catboost.prediction === 1 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {catboost.prediction !== undefined
+                      ? (catboost.prediction === 1 ? 'Lame' : 'Healthy')
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* XGBoost */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 bg-green-500 rounded" />
+                <span className="font-medium">XGBoost</span>
+                {ensemble.weights?.xgboost && (
+                  <span className="text-xs bg-green-100 text-green-700 px-2 py-0.5 rounded ml-auto">
+                    {((ensemble.weights.xgboost) * 100).toFixed(0)}% weight
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Probability</span>
+                  <span className={`font-medium ${
+                    (xgboost.probability || 0) > 0.5 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {xgboost.probability !== undefined
+                      ? `${(xgboost.probability * 100).toFixed(1)}%`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${(xgboost.probability || 0) > 0.5 ? 'bg-red-400' : 'bg-green-400'}`}
+                    style={{ width: `${(xgboost.probability || 0) * 100}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Prediction</span>
+                  <span className={`font-medium ${
+                    xgboost.prediction === 1 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {xgboost.prediction !== undefined
+                      ? (xgboost.prediction === 1 ? 'Lame' : 'Healthy')
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
+            </div>
+
+            {/* LightGBM */}
+            <div className="border rounded-lg p-4">
+              <div className="flex items-center gap-2 mb-3">
+                <div className="w-3 h-3 bg-purple-500 rounded" />
+                <span className="font-medium">LightGBM</span>
+                {ensemble.weights?.lightgbm && (
+                  <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded ml-auto">
+                    {((ensemble.weights.lightgbm) * 100).toFixed(0)}% weight
+                  </span>
+                )}
+              </div>
+              <div className="space-y-2">
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Probability</span>
+                  <span className={`font-medium ${
+                    (lightgbm.probability || 0) > 0.5 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {lightgbm.probability !== undefined
+                      ? `${(lightgbm.probability * 100).toFixed(1)}%`
+                      : 'N/A'}
+                  </span>
+                </div>
+                <div className="h-2 bg-gray-200 rounded-full overflow-hidden">
+                  <div
+                    className={`h-full ${(lightgbm.probability || 0) > 0.5 ? 'bg-red-400' : 'bg-green-400'}`}
+                    style={{ width: `${(lightgbm.probability || 0) * 100}%` }}
+                  />
+                </div>
+                <div className="flex justify-between text-sm">
+                  <span className="text-muted-foreground">Prediction</span>
+                  <span className={`font-medium ${
+                    lightgbm.prediction === 1 ? 'text-red-600' : 'text-green-600'
+                  }`}>
+                    {lightgbm.prediction !== undefined
+                      ? (lightgbm.prediction === 1 ? 'Lame' : 'Healthy')
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
             </div>
           </div>
         </div>
-        {ensemble.weights && (
-          <div>
-            <div className="text-sm font-medium mb-2">Model Weights</div>
-            <div className="flex gap-4 text-sm">
-              {Object.entries(ensemble.weights).map(([model, weight]) => (
-                <div key={model} className="bg-muted/30 px-3 py-1 rounded">
-                  {model}: {((weight as number) * 100).toFixed(0)}%
+
+        {/* Model Agreement Visualization */}
+        <div className="border rounded-lg p-4">
+          <h3 className="font-semibold mb-3">Model Agreement</h3>
+          <div className="flex items-center gap-4">
+            <div className="flex-1 h-8 flex rounded overflow-hidden">
+              <div
+                className="bg-blue-500 flex items-center justify-center text-white text-xs font-medium"
+                style={{
+                  width: `${(ensemble.weights?.catboost || 0.33) * 100}%`,
+                  opacity: catboost.prediction === ensemble.prediction ? 1 : 0.3
+                }}
+              >
+                {catboost.prediction === ensemble.prediction ? 'Agrees' : 'Disagrees'}
+              </div>
+              <div
+                className="bg-green-500 flex items-center justify-center text-white text-xs font-medium"
+                style={{
+                  width: `${(ensemble.weights?.xgboost || 0.33) * 100}%`,
+                  opacity: xgboost.prediction === ensemble.prediction ? 1 : 0.3
+                }}
+              >
+                {xgboost.prediction === ensemble.prediction ? 'Agrees' : 'Disagrees'}
+              </div>
+              <div
+                className="bg-purple-500 flex items-center justify-center text-white text-xs font-medium"
+                style={{
+                  width: `${(ensemble.weights?.lightgbm || 0.34) * 100}%`,
+                  opacity: lightgbm.prediction === ensemble.prediction ? 1 : 0.3
+                }}
+              >
+                {lightgbm.prediction === ensemble.prediction ? 'Agrees' : 'Disagrees'}
+              </div>
+            </div>
+          </div>
+          <div className="mt-2 text-sm text-muted-foreground">
+            {[catboost, xgboost, lightgbm].filter(m => m.prediction === ensemble.prediction).length} of 3 models agree with ensemble
+          </div>
+        </div>
+
+        {/* Feature Values */}
+        {features.length > 0 && featureNames.length > 0 && (
+          <div className="border rounded-lg p-4">
+            <h3 className="font-semibold mb-3">Input Features</h3>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              {featureNames.map((name: string, idx: number) => (
+                <div key={name} className="bg-muted/50 rounded px-3 py-2">
+                  <div className="text-xs text-muted-foreground truncate" title={name}>
+                    {name.replace(/_/g, ' ')}
+                  </div>
+                  <div className="font-mono text-sm font-medium">
+                    {typeof features[idx] === 'number'
+                      ? features[idx].toFixed(4)
+                      : features[idx]}
+                  </div>
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Pipeline Results Availability */}
+        {data.pipeline_results_available && (
+          <div className="text-sm text-muted-foreground">
+            <span className="font-medium">Pipeline data used: </span>
+            {Object.entries(data.pipeline_results_available)
+              .filter(([_, available]) => available)
+              .map(([pipeline]) => pipeline)
+              .join(', ') || 'None'}
           </div>
         )}
       </div>

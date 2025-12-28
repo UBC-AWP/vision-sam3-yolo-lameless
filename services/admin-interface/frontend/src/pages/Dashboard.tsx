@@ -278,12 +278,22 @@ export default function Dashboard() {
                       {(video.file_size / 1024 / 1024).toFixed(1)} MB
                     </td>
                     <td className="py-3 px-4 text-right">
-                      <Link
-                        to={`/video/${video.video_id}`}
-                        className="text-primary hover:underline text-sm"
-                      >
-                        View →
-                      </Link>
+                      <div className="flex gap-2 justify-end">
+                        <Link
+                          to={`/video/${video.video_id}`}
+                          className="px-2 py-1 text-xs bg-muted hover:bg-muted/80 rounded"
+                        >
+                          View
+                        </Link>
+                        {video.has_analysis && (
+                          <Link
+                            to={`/results/${video.video_id}`}
+                            className="px-2 py-1 text-xs bg-primary text-primary-foreground hover:bg-primary/90 rounded"
+                          >
+                            Results
+                          </Link>
+                        )}
+                      </div>
                     </td>
                   </tr>
                 ))}

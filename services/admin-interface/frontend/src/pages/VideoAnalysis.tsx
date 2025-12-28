@@ -138,13 +138,19 @@ export default function VideoAnalysis() {
         <div className="flex items-center gap-2">
           {currentLabel !== null && (
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${
-              currentLabel === 0 
-                ? 'bg-green-100 text-green-800' 
+              currentLabel === 0
+                ? 'bg-green-100 text-green-800'
                 : 'bg-red-100 text-red-800'
             }`}>
               Labeled: {currentLabel === 0 ? 'Sound' : 'Lame'}
             </span>
           )}
+          <button
+            onClick={() => navigate(`/results/${videoId}`)}
+            className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 text-sm font-medium"
+          >
+            View All Results
+          </button>
           <button
             onClick={() => navigate('/')}
             className="px-3 py-1 text-sm text-muted-foreground hover:text-foreground"

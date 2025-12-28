@@ -244,3 +244,83 @@ export const shapApi = {
     return response.data
   },
 }
+
+// ML Configuration endpoints
+export const mlConfigApi = {
+  getConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/')
+    return response.data
+  },
+  updateConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/', config)
+    return response.data
+  },
+  getCatBoostConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/catboost')
+    return response.data
+  },
+  updateCatBoostConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/catboost', config)
+    return response.data
+  },
+  getXGBoostConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/xgboost')
+    return response.data
+  },
+  updateXGBoostConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/xgboost', config)
+    return response.data
+  },
+  getLightGBMConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/lightgbm')
+    return response.data
+  },
+  updateLightGBMConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/lightgbm', config)
+    return response.data
+  },
+  getEnsembleConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/ensemble')
+    return response.data
+  },
+  updateEnsembleConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/ensemble', config)
+    return response.data
+  },
+  getTrainingConfig: async () => {
+    const response = await apiClient.get('/api/ml-config/training')
+    return response.data
+  },
+  updateTrainingConfig: async (config: any) => {
+    const response = await apiClient.put('/api/ml-config/training', config)
+    return response.data
+  },
+  resetToDefaults: async () => {
+    const response = await apiClient.post('/api/ml-config/reset')
+    return response.data
+  },
+  getSchema: async () => {
+    const response = await apiClient.get('/api/ml-config/schema')
+    return response.data
+  },
+  getModelsStatus: async () => {
+    const response = await apiClient.get('/api/ml-config/models/status')
+    return response.data
+  },
+  getParameterDescriptions: async () => {
+    const response = await apiClient.get('/api/ml-config/parameter-descriptions')
+    return response.data
+  },
+}
+
+// Analysis pipeline endpoints (for VideoResults)
+export const pipelineResultsApi = {
+  getAll: async (videoId: string) => {
+    const response = await apiClient.get(`/api/analysis/${videoId}/all`)
+    return response.data
+  },
+  getPipeline: async (videoId: string, pipeline: string) => {
+    const response = await apiClient.get(`/api/analysis/${videoId}/${pipeline}`)
+    return response.data
+  },
+}

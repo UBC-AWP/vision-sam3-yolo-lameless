@@ -35,6 +35,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/health', label: 'Health', roles: ['admin', 'researcher'] },
     { path: '/training', label: 'Queue', roles: ['admin', 'researcher'] },
     { path: '/models', label: 'Config', roles: ['admin', 'researcher'] },
+    { path: '/ml-config', label: 'ML Config', roles: ['admin', 'researcher'] },
   ]
 
   const handleLogout = async () => {

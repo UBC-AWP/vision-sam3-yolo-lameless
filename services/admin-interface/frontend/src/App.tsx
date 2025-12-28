@@ -16,6 +16,7 @@ import Login from './pages/Login'
 import PipelineMonitor from './pages/PipelineMonitor'
 import SystemHealth from './pages/SystemHealth'
 import VideoResults from './pages/VideoResults'
+import MLConfiguration from './pages/MLConfiguration'
 
 function App() {
   return (
@@ -71,6 +72,14 @@ function App() {
                     element={
                       <ResearcherRoute>
                         <ModelConfig />
+                      </ResearcherRoute>
+                    }
+                  />
+                  <Route
+                    path="/ml-config"
+                    element={
+                      <ResearcherRoute>
+                        <MLConfiguration />
                       </ResearcherRoute>
                     }
                   />
