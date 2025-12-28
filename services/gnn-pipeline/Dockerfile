@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM continuumio/miniconda3:latest
 
 WORKDIR /app
 
@@ -7,24 +7,26 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY services/gnn-pipeline/environment.yml .
-RUN pip install --no-cache-dir \
-    torch>=2.0.0 \
-    torchvision>=0.15.0 \
-    torch-geometric>=2.4.0 \
-    torch-scatter \
-    torch-sparse \
-    nats-py>=2.6.0 \
-    pyyaml>=6.0.1 \
-    numpy>=1.24.0
+# Install mamba
+RUN conda install -y mamba -n base -c conda-forge
+
+# Copy environment file
+COPY services/gnn-pipeline/environment.yml /app/environment.yml
+
+# Create conda environment
+RUN mamba env create -f /app/environment.yml && \
+    mamba clean -afy
+
+# Make RUN commands use the new environment
+SHELL ["conda", "run", "-n", "gnn-pipeline", "/bin/bash", "-c"]
 
 # Copy application code
 COPY services/gnn-pipeline/app /app/app
 COPY shared /app/shared
 
-# Set Python path
-ENV PYTHONPATH=/app
+# Set environment variables
+ENV PATH /opt/conda/envs/gnn-pipeline/bin:$PATH
+ENV PYTHONPATH /app:$PYTHONPATH
 
-CMD ["python", "-m", "app.main"]
-
+# Run the application
+CMD ["conda", "run", "-n", "gnn-pipeline", "python", "-m", "app.main"]

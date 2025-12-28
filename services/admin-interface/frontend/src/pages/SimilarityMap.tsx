@@ -245,10 +245,11 @@ export default function SimilarityMap() {
       }
     })
 
-    if (closestPoint) {
-      const screenX = (closestPoint.x * canvas.width - canvas.width / 2) * zoom + canvas.width / 2 + pan.x
-      const screenY = (closestPoint.y * canvas.height - canvas.height / 2) * zoom + canvas.height / 2 + pan.y
-      setHoveredPoint({ point: closestPoint, screenX: e.clientX, screenY: e.clientY })
+    if (closestPoint !== null) {
+      const p = closestPoint as VideoPoint
+      const screenX = (p.x * canvas.width - canvas.width / 2) * zoom + canvas.width / 2 + pan.x
+      const screenY = (p.y * canvas.height - canvas.height / 2) * zoom + canvas.height / 2 + pan.y
+      setHoveredPoint({ point: p, screenX: e.clientX, screenY: e.clientY })
     } else {
       setHoveredPoint(null)
     }

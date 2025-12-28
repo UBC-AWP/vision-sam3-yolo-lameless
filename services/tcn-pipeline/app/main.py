@@ -20,17 +20,22 @@ from shared.utils.nats_client import NATSClient
 
 
 class CausalConv1d(nn.Module):
-    """Causal 1D convolution with padding for temporal causality"""
-    
-    def __init__(self, in_channels: int, out_channels: int, 
-                 kernel_size: int, dilation: int = 1):
+    """Causal 1D convolution with padding for temporal causality and weight normalization"""
+
+    def __init__(self, in_channels: int, out_channels: int,
+                 kernel_size: int, dilation: int = 1, weight_norm: bool = True):
         super().__init__()
         self.padding = (kernel_size - 1) * dilation
-        self.conv = nn.Conv1d(
+        conv = nn.Conv1d(
             in_channels, out_channels, kernel_size,
             padding=self.padding, dilation=dilation
         )
-    
+        # Apply weight norm to the inner Conv1d layer
+        if weight_norm:
+            self.conv = nn.utils.parametrizations.weight_norm(conv)
+        else:
+            self.conv = conv
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         out = self.conv(x)
         # Remove future padding to maintain causality
@@ -42,7 +47,7 @@ class CausalConv1d(nn.Module):
 class TemporalBlock(nn.Module):
     """
     Temporal block with residual connection.
-    
+
     Architecture:
     - Two causal convolutions with dilation
     - Weight normalization
@@ -50,36 +55,33 @@ class TemporalBlock(nn.Module):
     - Dropout for regularization
     - Residual connection
     """
-    
+
     def __init__(self, in_channels: int, out_channels: int,
                  kernel_size: int, dilation: int, dropout: float = 0.2):
         super().__init__()
-        
-        self.conv1 = nn.utils.parametrizations.weight_norm(
-            CausalConv1d(in_channels, out_channels, kernel_size, dilation)
-        )
-        self.conv2 = nn.utils.parametrizations.weight_norm(
-            CausalConv1d(out_channels, out_channels, kernel_size, dilation)
-        )
-        
+
+        # Weight norm is applied inside CausalConv1d
+        self.conv1 = CausalConv1d(in_channels, out_channels, kernel_size, dilation, weight_norm=True)
+        self.conv2 = CausalConv1d(out_channels, out_channels, kernel_size, dilation, weight_norm=True)
+
         self.relu = nn.ReLU()
         self.dropout = nn.Dropout(dropout)
-        
+
         # Residual connection (1x1 conv if channels differ)
         self.residual = nn.Conv1d(in_channels, out_channels, 1) \
             if in_channels != out_channels else nn.Identity()
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # First convolution
         out = self.conv1(x)
         out = self.relu(out)
         out = self.dropout(out)
-        
+
         # Second convolution
         out = self.conv2(out)
         out = self.relu(out)
         out = self.dropout(out)
-        
+
         # Residual connection
         residual = self.residual(x)
         return self.relu(out + residual)

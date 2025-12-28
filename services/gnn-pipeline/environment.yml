@@ -1,6 +1,5 @@
 name: gnn-pipeline
 channels:
-  - pyg
   - pytorch
   - conda-forge
   - defaults
@@ -8,7 +7,6 @@ dependencies:
   - python=3.10
   - pytorch>=2.0.0
   - torchvision>=0.15.0
-  - pyg>=2.4.0
   - pip
   - pip:
     - torch-geometric>=2.4.0

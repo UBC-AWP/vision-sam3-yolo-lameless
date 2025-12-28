@@ -1,10 +1,10 @@
-FROM python:3.10-slim
+FROM continuumio/miniconda3:latest
 
 WORKDIR /app
 
-# Install system dependencies
+# Install system dependencies for OpenCV
 RUN apt-get update && apt-get install -y \
-    libgl1-mesa-glx \
+    libgl1 \
     libglib2.0-0 \
     libsm6 \
     libxext6 \
@@ -12,23 +12,26 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
-# Install Python dependencies
-COPY services/clip-curation/environment.yml .
-RUN pip install --no-cache-dir \
-    ultralytics>=8.0.0 \
-    torch>=2.0.0 \
-    torchvision>=0.15.0 \
-    nats-py>=2.6.0 \
-    pyyaml>=6.0.1 \
-    numpy>=1.24.0 \
-    opencv-python>=4.8.0
+# Install mamba
+RUN conda install -y mamba -n base -c conda-forge
+
+# Copy environment file
+COPY services/clip-curation/environment.yml /app/environment.yml
+
+# Create conda environment
+RUN mamba env create -f /app/environment.yml && \
+    mamba clean -afy
+
+# Make RUN commands use the new environment
+SHELL ["conda", "run", "-n", "clip-curation", "/bin/bash", "-c"]
 
 # Copy application code
 COPY services/clip-curation/app /app/app
 COPY shared /app/shared
 
-# Set Python path
-ENV PYTHONPATH=/app
+# Set environment variables
+ENV PATH /opt/conda/envs/clip-curation/bin:$PATH
+ENV PYTHONPATH /app:$PYTHONPATH
 
-CMD ["python", "-m", "app.main"]
-
+# Run the application
+CMD ["conda", "run", "-n", "clip-curation", "python", "-m", "app.main"]

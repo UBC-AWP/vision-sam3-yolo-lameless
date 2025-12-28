@@ -151,7 +151,8 @@ export default function TrainingModule() {
   // Current training state
   const [currentLevel, setCurrentLevel] = useState(() => {
     const score = parseInt(localStorage.getItem('training_score') || '0')
-    const level = TRAINING_LEVELS.findLast(l => score >= l.minScore)
+    const levels = TRAINING_LEVELS.filter((l: { minScore: number }) => score >= l.minScore)
+    const level = levels.length > 0 ? levels[levels.length - 1] : undefined
     return level || TRAINING_LEVELS[0]
   })
   const [currentExample, setCurrentExample] = useState<any>(null)
@@ -235,7 +236,8 @@ export default function TrainingModule() {
   }
 
   const getCurrentTier = () => {
-    return RATER_TIERS.findLast(t => accuracy >= t.minAccuracy) || RATER_TIERS[0]
+    const tiers = RATER_TIERS.filter((t: { minAccuracy: number }) => accuracy >= t.minAccuracy)
+    return tiers.length > 0 ? tiers[tiers.length - 1] : RATER_TIERS[0]
   }
 
   const getProgressToNextLevel = () => {

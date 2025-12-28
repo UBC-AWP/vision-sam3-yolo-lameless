@@ -1,20 +1,27 @@
-FROM python:3.10-slim
+FROM continuumio/miniconda3:latest
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY services/llm-service/environment.yml .
-RUN pip install --no-cache-dir \
-    openai>=1.0.0 \
-    nats-py>=2.6.0 \
-    pyyaml>=6.0.1
+# Install mamba
+RUN conda install -y mamba -n base -c conda-forge
+
+# Copy environment file
+COPY services/llm-service/environment.yml /app/environment.yml
+
+# Create conda environment
+RUN mamba env create -f /app/environment.yml && \
+    mamba clean -afy
+
+# Make RUN commands use the new environment
+SHELL ["conda", "run", "-n", "llm-service", "/bin/bash", "-c"]
 
 # Copy application code
 COPY services/llm-service/app /app/app
 COPY shared /app/shared
 
-# Set Python path
-ENV PYTHONPATH=/app
+# Set environment variables
+ENV PATH /opt/conda/envs/llm-service/bin:$PATH
+ENV PYTHONPATH /app:$PYTHONPATH
 
-CMD ["python", "-m", "app.main"]
-
+# Run the application
+CMD ["conda", "run", "-n", "llm-service", "python", "-m", "app.main"]
