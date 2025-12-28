@@ -1,0 +1,12 @@
+name: rater-reliability
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - nats-py>=2.6.0
+    - pyyaml>=6.0.1
+    - numpy>=1.24.0
+

@@ -76,6 +76,19 @@ services:
       - nats
       - video-ingestion
 
+  clip-curation:
+    build:
+      context: .
+      dockerfile: services/clip-curation/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - video-ingestion
+
   yolo-pipeline:
     build:
       context: .
@@ -131,6 +144,45 @@ services:
       - nats
       - video-preprocessing
 
+  tcn-pipeline:
+    build:
+      context: .
+      dockerfile: services/tcn-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - tleap-pipeline
+
+  transformer-pipeline:
+    build:
+      context: .
+      dockerfile: services/transformer-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - tleap-pipeline
+
+  gnn-pipeline:
+    build:
+      context: .
+      dockerfile: services/gnn-pipeline/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - dinov3-pipeline
+
   ml-pipeline:
     build:
       context: .
@@ -172,6 +224,33 @@ services:
       - ./shared:/app/shared
     environment:
       - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+      - fusion-service
+
+  rater-reliability:
+    build:
+      context: .
+      dockerfile: services/rater-reliability/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+    depends_on:
+      - nats
+
+  llm-service:
+    build:
+      context: .
+      dockerfile: services/llm-service/Dockerfile
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - OPENAI_MODEL=gpt-4o-mini
     depends_on:
       - nats
       - fusion-service

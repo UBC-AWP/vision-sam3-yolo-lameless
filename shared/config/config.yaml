@@ -5,10 +5,13 @@ nats:
   subjects:
     video_uploaded: "video.uploaded"
     video_preprocessed: "video.preprocessed"
+    video_curated: "video.curated"
     pipeline_yolo: "pipeline.yolo"
     pipeline_sam3: "pipeline.sam3"
     pipeline_dinov3: "pipeline.dinov3"
     pipeline_tleap: "pipeline.tleap"
+    pipeline_tcn: "pipeline.tcn"
+    pipeline_transformer: "pipeline.transformer"
     pipeline_ml: "pipeline.ml"
     pipeline_gnn: "pipeline.gnn"
     pipeline_fusion: "pipeline.fusion"
@@ -17,6 +20,9 @@ nats:
     training_yolo_requested: "training.yolo.requested"
     training_ml_requested: "training.ml.requested"
     training_completed: "training.completed"
+    hitl_comparison_requested: "hitl.comparison.requested"
+    hitl_comparison_submitted: "hitl.comparison.submitted"
+    rater_reliability_updated: "rater.reliability.updated"
 
 database:
   url: postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
@@ -30,8 +36,10 @@ qdrant:
 data:
   videos_dir: "data/videos"
   processed_dir: "data/processed"
+  canonical_dir: "data/canonical"
   training_dir: "data/training"
   results_dir: "data/results"
+  quality_reports_dir: "data/quality_reports"
 
 models:
   yolo:

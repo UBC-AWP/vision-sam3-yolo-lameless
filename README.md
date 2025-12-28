@@ -6,21 +6,43 @@ A comprehensive Docker-based ML/AI pipeline system for cow lameness detection us
 
 The system is built as a microservices architecture with Docker containers, using NATS for asynchronous messaging between services.
 
+### System Diagram
+
+![System Architecture](docs/design-diagram.png)
+
+> For detailed architecture documentation, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+
 ### Core Components
 
-1. **Video Ingestion Service** (Python/FastAPI): Upload, validate, and store videos
-2. **Video Preprocessing Service** (Python): Crop videos to show only cow using YOLO detection
-3. **ML/AI Pipeline Services** (Python):
-   - YOLO Detection Pipeline
-   - SAM3 Segmentation Pipeline
-   - DINOv3 Embedding Pipeline
-   - T-LEAP Pose Estimation Pipeline
-   - ML Pipeline (CatBoost, XGBoost, LightGBM, Ensemble)
-   - GNN/Graph Transformer Pipeline (optional)
-4. **Fusion Service** (Python): Combine predictions from multiple pipelines
-5. **SHAP Explainability Service** (Python): Generate explanations for predictions
-6. **Training Service** (Python): Orchestrate model training
-7. **Admin Interface** (FastAPI + React): Web UI for video upload, review, and analysis
+1. **Video Processing Layer**:
+   - Video Ingestion Service - Upload, validate, and store videos
+   - Video Preprocessing Service - Crop videos using YOLO detection
+   - Clip Curation Service - Extract optimal 5s canonical clips
+
+2. **Feature Extraction Pipelines**:
+   - YOLO Detection Pipeline - Bounding boxes, confidence
+   - SAM3 Segmentation Pipeline - Silhouette masks
+   - DINOv3 Embedding Pipeline - 768-dim feature vectors
+   - T-LEAP Pose Pipeline - Keypoints, locomotion metrics
+
+3. **Deep Learning Pipelines**:
+   - TCN Pipeline - Temporal Convolutional Network for gait analysis
+   - Transformer Pipeline - Self-attention based temporal modeling
+   - GraphGPS Pipeline - Graph Transformer for relational context
+
+4. **ML Ensemble**: CatBoost, XGBoost, LightGBM with stacking
+
+5. **Human-in-the-Loop**:
+   - Pairwise Comparison (7-point scale)
+   - Triplet Comparison (similarity/dissimilarity)
+   - Rater Reliability (Dawid-Skene, tier system)
+
+6. **Fusion & Explainability**:
+   - Fusion Service - Combine all predictions with gating rules
+   - SHAP Service - Feature importance explanations
+   - LLM Service - Natural language summaries
+
+7. **Admin Interface** (FastAPI + React): Dashboard, visualization, training module
 
 ## Prerequisites
 
@@ -72,30 +94,42 @@ python -m uvicorn app.main:app --reload --port 8001
 
 ```
 vision-sam3-yolo-lameless/
-├── services/              # Microservices
-│   ├── video-ingestion/
-│   ├── video-preprocessing/
-│   ├── yolo-pipeline/
-│   ├── sam3-pipeline/
-│   ├── dinov3-pipeline/
-│   ├── tleap-pipeline/
-│   ├── ml-pipeline/
-│   ├── gnn-pipeline/
-│   ├── fusion-service/
-│   ├── shap-service/
-│   ├── training-service/
+├── services/                    # 22 Microservices
+│   ├── video-ingestion/         # Upload handling
+│   ├── video-preprocessing/     # YOLO-based cropping
+│   ├── clip-curation/           # 5s canonical clip extraction
+│   ├── yolo-pipeline/           # Object detection
+│   ├── sam3-pipeline/           # Segmentation
+│   ├── dinov3-pipeline/         # Embeddings
+│   ├── tleap-pipeline/          # Pose estimation
+│   ├── tcn-pipeline/            # Temporal CNN
+│   ├── transformer-pipeline/    # Gait Transformer
+│   ├── gnn-pipeline/            # GraphGPS
+│   ├── ml-pipeline/             # XGBoost/CatBoost/LightGBM
+│   ├── fusion-service/          # Prediction fusion
+│   ├── rater-reliability/       # Dawid-Skene/GLAD
+│   ├── shap-service/            # Explainability
+│   ├── llm-service/             # Natural language explanations
+│   ├── training-service/        # Model training orchestration
+│   ├── annotation-renderer/     # Video annotation overlay
 │   └── admin-interface/
-│       ├── backend/      # FastAPI
-│       └── frontend/     # Vite + React + shadcn/ui
-├── shared/               # Shared code and config
+│       ├── backend/             # FastAPI REST API
+│       └── frontend/            # React + TypeScript + Tailwind
+├── shared/                      # Shared code and config
 │   ├── models/
 │   ├── utils/
 │   └── config/
-├── data/                 # Data storage
+├── data/                        # Data storage
 │   ├── videos/
+│   ├── canonical/               # Curated 5s clips
 │   ├── processed/
 │   ├── training/
-│   └── results/
+│   ├── results/
+│   └── quality_reports/
+├── docs/                        # Documentation
+│   ├── ARCHITECTURE.md
+│   └── design-diagram.png
+├── research/                    # Research code and papers
 ├── docker-compose.yml
 ├── environment.yml
 └── README.md

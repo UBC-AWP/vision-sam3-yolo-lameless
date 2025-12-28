@@ -105,6 +105,14 @@ export const analysisApi = {
     const response = await apiClient.get(`/api/analysis/${videoId}/summary`)
     return response.data
   },
+  getSimilarityMap: async () => {
+    const response = await apiClient.get('/api/analysis/similarity-map')
+    return response.data
+  },
+  getAllVideoEmbeddings: async () => {
+    const response = await apiClient.get('/api/analysis/embeddings')
+    return response.data
+  },
 }
 
 // Training endpoints
@@ -141,12 +149,13 @@ export const trainingApi = {
     return response.data
   },
   // Pairwise comparison endpoints
-  submitPairwise: async (videoId1: string, videoId2: string, winner: number, confidence = 'confident') => {
+  submitPairwise: async (videoId1: string, videoId2: string, winner: number, confidence = 'confident', rawScore?: number) => {
     const response = await apiClient.post('/api/training/pairwise', {
       video_id_1: videoId1,
       video_id_2: videoId2,
       winner,
       confidence,
+      raw_score: rawScore,
     })
     return response.data
   },
@@ -162,6 +171,44 @@ export const trainingApi = {
   },
   getPairwiseRanking: async () => {
     const response = await apiClient.get('/api/training/pairwise/ranking')
+    return response.data
+  },
+  // Triplet comparison endpoints
+  getNextTriplet: async () => {
+    const response = await apiClient.get('/api/training/triplet/next')
+    return response.data
+  },
+  submitTriplet: async (
+    referenceId: string, 
+    comparisonAId: string, 
+    comparisonBId: string, 
+    selectedAnswer: 'A' | 'B',
+    confidence: string,
+    taskType: string
+  ) => {
+    const response = await apiClient.post('/api/training/triplet', {
+      reference_id: referenceId,
+      comparison_a_id: comparisonAId,
+      comparison_b_id: comparisonBId,
+      selected_answer: selectedAnswer,
+      confidence,
+      task_type: taskType,
+    })
+    return response.data
+  },
+  getTripletStats: async () => {
+    const response = await apiClient.get('/api/training/triplet/stats')
+    return response.data
+  },
+  // Rater reliability endpoints
+  getRaterStats: async () => {
+    const response = await apiClient.get('/api/training/raters')
+    return response.data
+  },
+  getRaterTier: async (raterId?: string) => {
+    const response = await apiClient.get('/api/training/rater/tier', {
+      params: { rater_id: raterId }
+    })
     return response.data
   },
 }

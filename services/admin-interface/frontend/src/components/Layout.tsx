@@ -11,9 +11,13 @@ export default function Layout({ children }: LayoutProps) {
   const navItems = [
     { path: '/', label: 'Dashboard' },
     { path: '/upload', label: 'Upload' },
-    { path: '/pairwise', label: 'Pairwise Compare' },
-    { path: '/training', label: 'Training' },
-    { path: '/models', label: 'Model Config' },
+    { path: '/pairwise', label: 'Pairwise' },
+    { path: '/triplet', label: 'Triplet' },
+    { path: '/hierarchy', label: 'Hierarchy' },
+    { path: '/similarity', label: 'Similarity' },
+    { path: '/learn', label: '🎓 Learn' },
+    { path: '/training', label: 'Queue' },
+    { path: '/models', label: 'Config' },
   ]
 
   return (
@@ -70,7 +74,7 @@ export default function Layout({ children }: LayoutProps) {
       {/* Footer */}
       <footer className="border-t mt-auto py-4">
         <div className="container mx-auto px-4 text-center text-xs text-muted-foreground">
-          Cow Lameness Detection Research Platform • YOLO + SAM3 + DINOv3 + T-LEAP Pipeline
+          Cow Lameness Detection Research Platform • YOLO + SAM3 + DINOv3 + T-LEAP + TCN + Transformer + GraphGPS Pipeline
         </div>
       </footer>
     </div>

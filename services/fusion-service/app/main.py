@@ -1,20 +1,47 @@
 """
 Fusion Service
-Combines predictions from all pipelines to generate final lameness score
+Combines predictions from all pipelines to generate final lameness score.
+
+Enhanced with:
+- TCN, Transformer, and Graph Transformer predictions
+- Human consensus integration
+- Rule-based gating and stacking meta-model
+- Confidence calibration
+- Detailed pipeline comparison report
 """
 import asyncio
 import json
 from pathlib import Path
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional, Tuple
 import numpy as np
 import yaml
 from shared.utils.nats_client import NATSClient
-from sklearn.linear_model import LogisticRegression
-from catboost import CatBoostClassifier
 
 
 class FusionService:
-    """Fusion service to combine all pipeline predictions"""
+    """
+    Enhanced Fusion service combining all pipeline predictions.
+    
+    Pipelines integrated:
+    - ML (XGBoost, CatBoost, LightGBM ensemble)
+    - TCN (Temporal Convolutional Network)
+    - Transformer (Gait Transformer)
+    - GNN (Graph Transformer / GraphGPS)
+    - Human consensus (weighted by rater reliability)
+    """
+    
+    # Pipeline weights for weighted average fusion
+    PIPELINE_WEIGHTS = {
+        "ml": 0.25,
+        "tcn": 0.15,
+        "transformer": 0.15,
+        "gnn": 0.15,
+        "human": 0.30  # High weight for human consensus
+    }
+    
+    # Confidence thresholds for gating
+    HIGH_CONFIDENCE_THRESHOLD = 0.85
+    LOW_CONFIDENCE_THRESHOLD = 0.55
     
     def __init__(self):
         self.config_path = Path("/app/shared/config/config.yaml")
@@ -25,9 +52,9 @@ class FusionService:
         self.models_dir = Path("/app/shared/models/fusion")
         self.models_dir.mkdir(parents=True, exist_ok=True)
         
-        # Load fusion model if available
-        self.fusion_model = None
-        self._load_fusion_model()
+        # Load stacking meta-model if available
+        self.stacking_model = None
+        self._load_stacking_model()
         
         # Directories
         self.results_dir = Path("/app/data/results/fusion")
@@ -43,30 +70,78 @@ class FusionService:
                 return yaml.safe_load(f)
         return {}
     
-    def _load_fusion_model(self):
-        """Load fusion model if available"""
-        fusion_file = self.models_dir / "fusion_model.pkl"
-        if fusion_file.exists():
+    def _load_stacking_model(self):
+        """Load stacking meta-model if available"""
+        stacking_file = self.models_dir / "stacking_model.pkl"
+        if stacking_file.exists():
             try:
                 import pickle
-                with open(fusion_file, "rb") as f:
-                    self.fusion_model = pickle.load(f)
-                print(f"Loaded fusion model: {fusion_file}")
+                with open(stacking_file, "rb") as f:
+                    self.stacking_model = pickle.load(f)
+                print(f"✅ Loaded stacking model: {stacking_file}")
             except Exception as e:
-                print(f"Failed to load fusion model: {e}")
+                print(f"⚠️ Failed to load stacking model: {e}")
     
     def collect_pipeline_predictions(self, video_id: str) -> Dict[str, Any]:
-        """Collect predictions from all pipelines"""
+        """Collect predictions from all pipelines including new DL models"""
         predictions = {}
         
-        # ML pipeline predictions
+        # ML pipeline predictions (XGBoost, CatBoost, LightGBM)
         ml_file = Path(f"/app/data/results/ml/{video_id}_ml.json")
         if ml_file.exists():
             with open(ml_file) as f:
                 ml_data = json.load(f)
                 if "predictions" in ml_data:
-                    predictions["ml"] = ml_data["predictions"]
+                    predictions["ml"] = {
+                        "probability": ml_data["predictions"].get("ensemble", {}).get("probability", 0.5),
+                        "uncertainty": 0.1,  # Default uncertainty
+                        "model_predictions": ml_data["predictions"]
+                    }
         
+        # TCN pipeline predictions
+        tcn_file = Path(f"/app/data/results/tcn/{video_id}_tcn.json")
+        if tcn_file.exists():
+            with open(tcn_file) as f:
+                tcn_data = json.load(f)
+                predictions["tcn"] = {
+                    "probability": tcn_data.get("severity_score", 0.5),
+                    "uncertainty": tcn_data.get("uncertainty", 0.1)
+                }
+        
+        # Transformer pipeline predictions
+        transformer_file = Path(f"/app/data/results/transformer/{video_id}_transformer.json")
+        if transformer_file.exists():
+            with open(transformer_file) as f:
+                transformer_data = json.load(f)
+                predictions["transformer"] = {
+                    "probability": transformer_data.get("severity_score", 0.5),
+                    "uncertainty": transformer_data.get("uncertainty", 0.1),
+                    "temporal_saliency": transformer_data.get("temporal_saliency", [])
+                }
+        
+        # GNN (GraphGPS) pipeline predictions
+        gnn_file = Path(f"/app/data/results/gnn/{video_id}_gnn.json")
+        if gnn_file.exists():
+            with open(gnn_file) as f:
+                gnn_data = json.load(f)
+                predictions["gnn"] = {
+                    "probability": gnn_data.get("severity_score", 0.5),
+                    "uncertainty": gnn_data.get("uncertainty", 0.1),
+                    "neighbor_influence": gnn_data.get("neighbor_influence", [])
+                }
+        
+        # Human consensus (from rater reliability service)
+        human_file = Path(f"/app/data/rater_reliability/consensus/{video_id}.json")
+        if human_file.exists():
+            with open(human_file) as f:
+                human_data = json.load(f)
+                predictions["human"] = {
+                    "probability": human_data.get("probability", 0.5),
+                    "confidence": human_data.get("confidence", 0.5),
+                    "num_raters": human_data.get("num_raters", 0)
+                }
+        
+        # Also load feature-level data for SHAP
         # YOLO features
         yolo_file = Path(f"/app/data/results/yolo/{video_id}_yolo.json")
         if yolo_file.exists():
@@ -75,119 +150,165 @@ class FusionService:
                 if "features" in yolo_data:
                     predictions["yolo"] = yolo_data["features"]
         
-        # SAM3 features
-        sam3_file = Path(f"/app/data/results/sam3/{video_id}_sam3.json")
-        if sam3_file.exists():
-            with open(sam3_file) as f:
-                sam3_data = json.load(f)
-                if "features" in sam3_data:
-                    predictions["sam3"] = sam3_data["features"]
-        
-        # DINOv3 features
-        dinov3_file = Path(f"/app/data/results/dinov3/{video_id}_dinov3.json")
-        if dinov3_file.exists():
-            with open(dinov3_file) as f:
-                dinov3_data = json.load(f)
-                predictions["dinov3"] = {
-                    "neighbor_evidence": dinov3_data.get("neighbor_evidence", 0.5),
-                    "similar_cases": dinov3_data.get("similar_cases", [])
-                }
-        
-        # T-LEAP features (if available)
+        # T-LEAP features
         tleap_file = Path(f"/app/data/results/tleap/{video_id}_tleap.json")
         if tleap_file.exists():
             with open(tleap_file) as f:
                 tleap_data = json.load(f)
-                if "locomotion_traits" in tleap_data:
-                    predictions["tleap"] = tleap_data["locomotion_traits"]
+                predictions["tleap"] = tleap_data.get("locomotion_features", {})
         
         return predictions
     
+    def apply_gating_rules(self, predictions: Dict[str, Any]) -> Tuple[str, str]:
+        """
+        Apply rule-based gating to determine fusion strategy.
+        
+        Returns:
+            decision_mode: 'human', 'automated', 'hybrid', 'uncertain'
+            explanation: Reason for the decision mode
+        """
+        human_pred = predictions.get("human", {})
+        human_conf = human_pred.get("confidence", 0)
+        human_num_raters = human_pred.get("num_raters", 0)
+        
+        # Collect automated predictions
+        auto_preds = []
+        for key in ["ml", "tcn", "transformer", "gnn"]:
+            if key in predictions:
+                auto_preds.append(predictions[key].get("probability", 0.5))
+        
+        if not auto_preds:
+            if human_num_raters > 0:
+                return "human", "No automated predictions available; using human consensus"
+            return "uncertain", "Insufficient data from all sources"
+        
+        auto_mean = np.mean(auto_preds)
+        auto_std = np.std(auto_preds)
+        auto_agreement = 1.0 - auto_std  # Higher when models agree
+        
+        # Rule 1: High human confidence with sufficient raters
+        if human_conf >= self.HIGH_CONFIDENCE_THRESHOLD and human_num_raters >= 3:
+            return "human", f"High human consensus confidence ({human_conf:.2f}) with {human_num_raters} raters"
+        
+        # Rule 2: High model agreement with high confidence
+        if auto_agreement >= 0.9 and all(
+            abs(p - 0.5) > 0.3 for p in auto_preds
+        ):
+            return "automated", f"Strong model agreement ({auto_agreement:.2f}) with high confidence"
+        
+        # Rule 3: Model disagreement - request more human labels
+        if auto_std > 0.25:
+            return "uncertain", f"Model disagreement (std={auto_std:.2f}); more human labels recommended"
+        
+        # Rule 4: Hybrid approach for moderate cases
+        return "hybrid", "Moderate confidence; combining human and automated predictions"
+    
     def fuse_predictions(self, predictions: Dict[str, Any]) -> Dict[str, Any]:
-        """Fuse predictions from all pipelines"""
-        fusion_features = []
-        feature_names = []
+        """
+        Enhanced fusion combining all pipelines with gating rules.
+        """
+        # Apply gating rules
+        decision_mode, gate_explanation = self.apply_gating_rules(predictions)
         
-        # ML pipeline ensemble prediction
-        if "ml" in predictions and "ensemble" in predictions["ml"]:
-            ml_prob = predictions["ml"]["ensemble"]["probability"]
-            fusion_features.append(ml_prob)
-            feature_names.append("ml_ensemble_prob")
+        # Collect pipeline probabilities and uncertainties
+        pipeline_probs = {}
+        pipeline_uncertainties = {}
+        
+        for key in ["ml", "tcn", "transformer", "gnn", "human"]:
+            if key in predictions:
+                pipeline_probs[key] = predictions[key].get("probability", 0.5)
+                pipeline_uncertainties[key] = predictions[key].get("uncertainty", 
+                    1.0 - predictions[key].get("confidence", 0.5))
+        
+        # Determine fusion probability based on decision mode
+        if decision_mode == "human" and "human" in pipeline_probs:
+            fusion_prob = pipeline_probs["human"]
+            confidence = predictions["human"].get("confidence", 0.5)
+        
+        elif decision_mode == "automated":
+            # Use stacking model if available
+            if self.stacking_model:
+                features = [pipeline_probs.get(k, 0.5) for k in ["ml", "tcn", "transformer", "gnn"]]
+                try:
+                    fusion_prob = float(self.stacking_model.predict_proba([features])[0, 1])
+                except:
+                    fusion_prob = np.mean(list(pipeline_probs.values()))
+            else:
+                # Weighted average of automated pipelines
+                weighted_sum = 0.0
+                total_weight = 0.0
+                for key in ["ml", "tcn", "transformer", "gnn"]:
+                    if key in pipeline_probs:
+                        weight = self.PIPELINE_WEIGHTS.get(key, 0.1)
+                        # Reduce weight for high uncertainty
+                        uncertainty = pipeline_uncertainties.get(key, 0.5)
+                        adjusted_weight = weight * (1.0 - uncertainty * 0.5)
+                        weighted_sum += pipeline_probs[key] * adjusted_weight
+                        total_weight += adjusted_weight
+                
+                fusion_prob = weighted_sum / total_weight if total_weight > 0 else 0.5
             
-            # Individual model predictions
-            for model_name in ["catboost", "xgboost", "lightgbm"]:
-                if model_name in predictions["ml"]:
-                    fusion_features.append(predictions["ml"][model_name]["probability"])
-                    feature_names.append(f"ml_{model_name}_prob")
+            # Compute confidence from agreement
+            auto_probs = [v for k, v in pipeline_probs.items() if k != "human"]
+            confidence = 1.0 - np.std(auto_probs) if auto_probs else 0.5
         
-        # YOLO confidence
-        if "yolo" in predictions:
-            yolo_features = predictions["yolo"]
-            fusion_features.append(yolo_features.get("avg_confidence", 0.5))
-            feature_names.append("yolo_confidence")
-        
-        # SAM3 area ratio
-        if "sam3" in predictions:
-            sam3_features = predictions["sam3"]
-            fusion_features.append(sam3_features.get("avg_area_ratio", 0.5))
-            feature_names.append("sam3_area_ratio")
-        
-        # DINOv3 neighbor evidence
-        if "dinov3" in predictions:
-            fusion_features.append(predictions["dinov3"].get("neighbor_evidence", 0.5))
-            feature_names.append("dinov3_neighbor_evidence")
-        
-        # T-LEAP asymmetry (if available)
-        if "tleap" in predictions:
-            tleap = predictions["tleap"]
-            fusion_features.append(tleap.get("asymmetry_score", 0.5))
-            feature_names.append("tleap_asymmetry")
-        
-        # If no features, use default
-        if not fusion_features:
-            fusion_features = [0.5] * 5
-            feature_names = [f"default_{i}" for i in range(5)]
-        
-        # Use fusion model if available, otherwise weighted average
-        if self.fusion_model:
-            try:
-                features_array = np.array(fusion_features).reshape(1, -1)
-                fusion_prob = self.fusion_model.predict_proba(features_array)[0, 1]
-            except Exception as e:
-                print(f"Fusion model prediction error: {e}")
-                fusion_prob = np.mean(fusion_features)
-        else:
-            # Simple weighted average
-            weights = {
-                "ml_ensemble_prob": 0.5,
-                "yolo_confidence": 0.15,
-                "sam3_area_ratio": 0.1,
-                "dinov3_neighbor_evidence": 0.15,
-                "tleap_asymmetry": 0.1
-            }
-            
+        elif decision_mode == "hybrid":
+            # Combine human and automated with configured weights
             weighted_sum = 0.0
             total_weight = 0.0
             
-            for i, name in enumerate(feature_names):
-                weight = weights.get(name, 0.1)
-                weighted_sum += fusion_features[i] * weight
-                total_weight += weight
+            for key, prob in pipeline_probs.items():
+                weight = self.PIPELINE_WEIGHTS.get(key, 0.1)
+                uncertainty = pipeline_uncertainties.get(key, 0.5)
+                adjusted_weight = weight * (1.0 - uncertainty * 0.5)
+                weighted_sum += prob * adjusted_weight
+                total_weight += adjusted_weight
             
             fusion_prob = weighted_sum / total_weight if total_weight > 0 else 0.5
+            confidence = 1.0 - np.std(list(pipeline_probs.values()))
+        
+        else:  # uncertain
+            fusion_prob = 0.5
+            confidence = 0.0
+        
+        # Compute agreement metrics
+        all_probs = list(pipeline_probs.values())
+        model_agreement = 1.0 - np.std(all_probs) if all_probs else 0.0
+        all_predictions = [int(p > 0.5) for p in all_probs]
+        unanimous = len(set(all_predictions)) == 1 if all_predictions else False
+        
+        # Determine recommendation
+        if confidence < 0.3 or decision_mode == "uncertain":
+            recommendation = "Request more human labels for this video"
+        elif fusion_prob > 0.7:
+            recommendation = "High lameness probability - consider veterinary examination"
+        elif fusion_prob < 0.3:
+            recommendation = "Low lameness probability - monitor routine"
+        else:
+            recommendation = "Moderate lameness indication - continue observation"
         
         return {
             "final_probability": float(fusion_prob),
             "final_prediction": int(fusion_prob > 0.5),
-            "fusion_features": fusion_features,
-            "feature_names": feature_names,
+            "confidence": float(confidence),
+            "decision_mode": decision_mode,
+            "gate_explanation": gate_explanation,
+            "model_agreement": float(model_agreement),
+            "unanimous": unanimous,
+            "recommendation": recommendation,
             "pipeline_contributions": {
-                "ml": predictions.get("ml", {}).get("ensemble", {}).get("probability", 0.5) if "ml" in predictions else None,
-                "yolo": predictions.get("yolo", {}).get("avg_confidence", 0.5) if "yolo" in predictions else None,
-                "sam3": predictions.get("sam3", {}).get("avg_area_ratio", 0.5) if "sam3" in predictions else None,
-                "dinov3": predictions.get("dinov3", {}).get("neighbor_evidence", 0.5) if "dinov3" in predictions else None,
-                "tleap": predictions.get("tleap", {}).get("asymmetry_score", 0.5) if "tleap" in predictions else None
-            }
+                key: {
+                    "probability": float(pipeline_probs.get(key, 0.5)),
+                    "uncertainty": float(pipeline_uncertainties.get(key, 0.5)),
+                    "prediction": int(pipeline_probs.get(key, 0.5) > 0.5),
+                    "weight": self.PIPELINE_WEIGHTS.get(key, 0.1)
+                }
+                for key in ["ml", "tcn", "transformer", "gnn", "human"]
+                if key in pipeline_probs
+            },
+            "pipelines_used": list(pipeline_probs.keys()),
+            "tleap_features": predictions.get("tleap", {}),
+            "yolo_features": predictions.get("yolo", {})
         }
     
     async def process_video(self, video_data: dict):
