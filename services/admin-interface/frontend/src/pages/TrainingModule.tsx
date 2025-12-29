@@ -1,5 +1,12 @@
 import { useEffect, useState, useRef, useCallback } from 'react'
-import { videosApi } from '@/api/client'
+import { videosApi, trainingApi, tutorialApi } from '@/api/client'
+import { useAuth } from '@/contexts/AuthContext'
+
+interface Video {
+  video_id: string
+  filename: string
+  uploaded_at?: string
+}
 
 // Training levels and their configurations
 const TRAINING_LEVELS = [
@@ -10,79 +17,6 @@ const TRAINING_LEVELS = [
   { level: 5, name: 'Master', minScore: 20, requiredCorrect: 10, difficulty: 'hard' },
 ]
 
-// Example training data (in production, load from backend)
-const TRAINING_EXAMPLES = {
-  easy: [
-    {
-      id: 'easy_1',
-      description: 'Clear arched back while walking',
-      correctAnswer: 1, // lame
-      feedback: 'Correct! This cow shows a pronounced arched back, a classic sign of lameness.',
-      hint: 'Look at the spine curvature during walking.',
-    },
-    {
-      id: 'easy_2',
-      description: 'Normal straight-back gait',
-      correctAnswer: 0, // healthy
-      feedback: 'Correct! This cow walks with a straight back and even stride - signs of good health.',
-      hint: 'Notice the smooth, even gait pattern.',
-    },
-    {
-      id: 'easy_3',
-      description: 'Severe head bobbing',
-      correctAnswer: 1,
-      feedback: 'Correct! Excessive head bobbing often indicates pain in the front legs.',
-      hint: 'Watch the head movement relative to the body.',
-    },
-  ],
-  medium: [
-    {
-      id: 'med_1',
-      description: 'Subtle uneven stride',
-      correctAnswer: 1,
-      feedback: 'Good catch! This subtle unevenness indicates early-stage lameness.',
-      hint: 'Compare the stride length of front vs back legs.',
-    },
-    {
-      id: 'med_2',
-      description: 'Slightly hesitant gait',
-      correctAnswer: 1,
-      feedback: 'Correct! Hesitation and slower movement can indicate discomfort.',
-      hint: 'Watch for any pause or reluctance in movement.',
-    },
-    {
-      id: 'med_3',
-      description: 'Normal but cautious walking',
-      correctAnswer: 0,
-      feedback: 'Correct! This cow is walking normally, just at a slower pace.',
-      hint: 'Look for actual gait abnormalities, not just speed.',
-    },
-  ],
-  hard: [
-    {
-      id: 'hard_1',
-      description: 'Borderline case - minimal back arch',
-      correctAnswer: 1,
-      feedback: 'Excellent! Even subtle arch changes can indicate early lameness.',
-      hint: 'Focus on the angle of the spine at the withers.',
-    },
-    {
-      id: 'hard_2',
-      description: 'Variable gait pattern',
-      correctAnswer: 1,
-      feedback: 'Great observation! Inconsistent gait patterns often indicate intermittent pain.',
-      hint: 'Watch the full duration and look for pattern changes.',
-    },
-    {
-      id: 'hard_3',
-      description: 'Quick confident walking',
-      correctAnswer: 0,
-      feedback: 'Correct! Despite the quick pace, this cow shows no lameness indicators.',
-      hint: 'Speed alone is not an indicator - look for gait quality.',
-    },
-  ],
-}
-
 // Rater tiers based on performance
 const RATER_TIERS = [
   { tier: 'Bronze', minAccuracy: 0, color: 'text-orange-600', bgColor: 'bg-orange-100', icon: '🥉' },
@@ -90,41 +24,48 @@ const RATER_TIERS = [
   { tier: 'Gold', minAccuracy: 0.85, color: 'text-yellow-600', bgColor: 'bg-yellow-100', icon: '🥇' },
 ]
 
-// Sound effects (would be actual audio files in production)
+// 7-point scale labels
+const SCALE_LABELS = [
+  { value: -3, label: 'A Much More Lame', short: '-3' },
+  { value: -2, label: 'A More Lame', short: '-2' },
+  { value: -1, label: 'A Slightly More Lame', short: '-1' },
+  { value: 0, label: 'Equal / Cannot Decide', short: '0' },
+  { value: 1, label: 'B Slightly More Lame', short: '+1' },
+  { value: 2, label: 'B More Lame', short: '+2' },
+  { value: 3, label: 'B Much More Lame', short: '+3' },
+]
+
+// Sound effects
 const playSound = (type: 'correct' | 'incorrect' | 'levelup' | 'streak') => {
-  // In production, use actual audio files
-  console.log(`Playing sound: ${type}`)
-  
-  // Browser audio feedback using Web Audio API
   try {
     const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
     const oscillator = audioContext.createOscillator()
     const gainNode = audioContext.createGain()
-    
+
     oscillator.connect(gainNode)
     gainNode.connect(audioContext.destination)
-    
+
     gainNode.gain.value = 0.1
-    
+
     switch (type) {
       case 'correct':
-        oscillator.frequency.value = 880 // A5
+        oscillator.frequency.value = 880
         oscillator.type = 'sine'
         break
       case 'incorrect':
-        oscillator.frequency.value = 220 // A3
+        oscillator.frequency.value = 220
         oscillator.type = 'triangle'
         break
       case 'levelup':
-        oscillator.frequency.value = 1047 // C6
+        oscillator.frequency.value = 1047
         oscillator.type = 'sine'
         break
       case 'streak':
-        oscillator.frequency.value = 1319 // E6
+        oscillator.frequency.value = 1319
         oscillator.type = 'sine'
         break
     }
-    
+
     oscillator.start()
     setTimeout(() => oscillator.stop(), 150)
   } catch (e) {
@@ -132,91 +73,473 @@ const playSound = (type: 'correct' | 'incorrect' | 'levelup' | 'streak') => {
   }
 }
 
+interface TrainingExample {
+  id: string
+  video_id_1?: string
+  video_id_2?: string
+  description: string
+  hint: string
+  correct_winner: number
+  correct_degree: number
+  difficulty: string
+  is_auto_generated?: boolean
+}
+
+interface LeaderboardEntry {
+  rank: number
+  user_id: string
+  username: string
+  total_score: number
+  accuracy: number
+  rater_tier: string
+  current_level: number
+}
+
 export default function TrainingModule() {
+  const { user } = useAuth()
+
   // User progress state
-  const [totalScore, setTotalScore] = useState(() => 
-    parseInt(localStorage.getItem('training_score') || '0')
-  )
+  const [totalScore, setTotalScore] = useState(0)
   const [streak, setStreak] = useState(0)
-  const [accuracy, setAccuracy] = useState(() => 
-    parseFloat(localStorage.getItem('training_accuracy') || '0')
-  )
-  const [totalAttempts, setTotalAttempts] = useState(() => 
-    parseInt(localStorage.getItem('training_attempts') || '0')
-  )
-  const [correctCount, setCorrectCount] = useState(() => 
-    parseInt(localStorage.getItem('training_correct') || '0')
-  )
-  
+  const [accuracy, setAccuracy] = useState(0)
+  const [totalAttempts, setTotalAttempts] = useState(0)
+  const [correctCount, setCorrectCount] = useState(0)
+  const [currentLevel, setCurrentLevel] = useState(TRAINING_LEVELS[0])
+
+  // Training examples from backend
+  const [trainingExamples, setTrainingExamples] = useState<{
+    easy: TrainingExample[]
+    medium: TrainingExample[]
+    hard: TrainingExample[]
+  }>({ easy: [], medium: [], hard: [] })
+
   // Current training state
-  const [currentLevel, setCurrentLevel] = useState(() => {
-    const score = parseInt(localStorage.getItem('training_score') || '0')
-    const levels = TRAINING_LEVELS.filter((l: { minScore: number }) => score >= l.minScore)
-    const level = levels.length > 0 ? levels[levels.length - 1] : undefined
-    return level || TRAINING_LEVELS[0]
-  })
-  const [currentExample, setCurrentExample] = useState<any>(null)
+  const [currentExample, setCurrentExample] = useState<TrainingExample | null>(null)
   const [selectedAnswer, setSelectedAnswer] = useState<number | null>(null)
   const [showFeedback, setShowFeedback] = useState(false)
   const [showHint, setShowHint] = useState(false)
   const [showLevelUp, setShowLevelUp] = useState(false)
-  
+
+  // Training mode: 'binary' (healthy/lame) or 'comparison' (7-point scale)
+  const [trainingMode, setTrainingMode] = useState<'binary' | 'comparison'>('comparison')
+
   // UI state
-  const [loading, setLoading] = useState(false)
-  const [view, setView] = useState<'training' | 'progress' | 'leaderboard'>('training')
-  
-  const videoRef = useRef<HTMLVideoElement>(null)
+  const [loading, setLoading] = useState(true)
+  const [saving, setSaving] = useState(false)
+  const [view, setView] = useState<'training' | 'progress' | 'leaderboard' | 'setup'>('training')
 
+  // Setup state (for admins)
+  const [availableVideos, setAvailableVideos] = useState<Video[]>([])
+  const [uploadingVideos, setUploadingVideos] = useState(false)
+  const [uploadProgress, setUploadProgress] = useState<{ [key: string]: number }>({})
+  const [creatingExample, setCreatingExample] = useState(false)
+  const [newExample, setNewExample] = useState({
+    video_id_1: '',
+    video_id_2: '',
+    correct_winner: 0,
+    correct_degree: 1,
+    difficulty: 'easy',
+    description: '',
+    hint: ''
+  })
+  const [hoveredVideoId, setHoveredVideoId] = useState<string | null>(null)
+  const [exampleFilter, setExampleFilter] = useState<'all' | 'easy' | 'medium' | 'hard'>('all')
+  const [showEditExampleModal, setShowEditExampleModal] = useState(false)
+  const [editingExample, setEditingExample] = useState<TrainingExample | null>(null)
+  const [savingExample, setSavingExample] = useState(false)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  // Video playback
+  const videoRef1 = useRef<HTMLVideoElement>(null)
+  const videoRef2 = useRef<HTMLVideoElement>(null)
+  const [isPlaying, setIsPlaying] = useState(false)
+
+  // Leaderboard
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([])
+
+  // Load progress and examples on mount
   useEffect(() => {
-    loadNextExample()
-  }, [currentLevel])
+    loadProgress()
+    loadExamples()
+    loadLeaderboard()
+    loadAvailableVideos()
+  }, [])
 
+  // Sync progress to backend when it changes
   useEffect(() => {
-    // Save progress to localStorage
-    localStorage.setItem('training_score', totalScore.toString())
-    localStorage.setItem('training_attempts', totalAttempts.toString())
-    localStorage.setItem('training_correct', correctCount.toString())
-    localStorage.setItem('training_accuracy', accuracy.toString())
-  }, [totalScore, totalAttempts, correctCount, accuracy])
+    if (totalAttempts > 0 && !loading) {
+      syncProgress()
+    }
+  }, [totalScore, totalAttempts, correctCount, streak])
 
-  const loadNextExample = () => {
+  const loadProgress = async () => {
+    try {
+      // First try to load from backend
+      const userId = user?.id || localStorage.getItem('training_user_id') || 'anonymous'
+      const data = await trainingApi.getLearnProgress(userId)
+
+      if (data && data.total_attempts > 0) {
+        setTotalScore(data.total_score)
+        setTotalAttempts(data.total_attempts)
+        setCorrectCount(data.correct_count)
+        setStreak(data.streak || 0)
+        setAccuracy(data.correct_count / data.total_attempts)
+
+        const level = TRAINING_LEVELS.filter(l => data.total_score >= l.minScore).pop() || TRAINING_LEVELS[0]
+        setCurrentLevel(level)
+      } else {
+        // Fall back to localStorage
+        const localScore = parseInt(localStorage.getItem('training_score') || '0')
+        const localAttempts = parseInt(localStorage.getItem('training_attempts') || '0')
+        const localCorrect = parseInt(localStorage.getItem('training_correct') || '0')
+
+        setTotalScore(localScore)
+        setTotalAttempts(localAttempts)
+        setCorrectCount(localCorrect)
+        setAccuracy(localAttempts > 0 ? localCorrect / localAttempts : 0)
+
+        const level = TRAINING_LEVELS.filter(l => localScore >= l.minScore).pop() || TRAINING_LEVELS[0]
+        setCurrentLevel(level)
+      }
+    } catch (error) {
+      console.error('Failed to load progress:', error)
+      // Fall back to localStorage
+      const localScore = parseInt(localStorage.getItem('training_score') || '0')
+      setTotalScore(localScore)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const loadExamples = async () => {
+    try {
+      // Start with empty groups
+      const grouped: { easy: TrainingExample[]; medium: TrainingExample[]; hard: TrainingExample[] } = {
+        easy: [],
+        medium: [],
+        hard: []
+      }
+
+      // Try loading from tutorial API first
+      const tutorialData = await tutorialApi.getExamples()
+      if (tutorialData.examples && tutorialData.examples.length > 0) {
+        // Group by difficulty
+        tutorialData.examples.forEach((ex: any) => {
+          const diff = ex.difficulty || 'medium'
+          if (grouped[diff as keyof typeof grouped]) {
+            grouped[diff as keyof typeof grouped].push({
+              id: ex.id,
+              video_id_1: ex.video_id_1,
+              video_id_2: ex.video_id_2,
+              description: ex.description || 'Compare these two cows',
+              hint: ex.hint || 'Look at the gait patterns',
+              correct_winner: ex.correct_answer > 0 ? 2 : ex.correct_answer < 0 ? 1 : 0,
+              correct_degree: Math.abs(ex.correct_answer) || 1,
+              difficulty: diff
+            })
+          }
+        })
+      }
+
+      // Also load auto-generated examples to fill in missing difficulties
+      const autoData = await trainingApi.getLearnExamples()
+      if (autoData.examples && typeof autoData.examples === 'object') {
+        // Merge auto-generated examples for difficulties that have no examples
+        for (const diff of ['easy', 'medium', 'hard'] as const) {
+          if (grouped[diff].length === 0 && autoData.examples[diff]?.length > 0) {
+            grouped[diff] = autoData.examples[diff].map((ex: any) => ({
+              id: ex.id,
+              video_id_1: ex.video_id_1,
+              video_id_2: ex.video_id_2,
+              description: ex.description || 'Compare these two cows',
+              hint: ex.hint || 'Look at the gait patterns',
+              correct_winner: ex.correct_winner || 0,
+              correct_degree: ex.correct_degree || 1,
+              difficulty: diff,
+              is_auto_generated: ex.is_auto_generated
+            }))
+          }
+        }
+      }
+
+      setTrainingExamples(grouped)
+    } catch (error) {
+      console.error('Failed to load examples:', error)
+    }
+  }
+
+  const loadLeaderboard = async () => {
+    try {
+      const data = await trainingApi.getLeaderboard(20)
+      if (data.leaderboard) {
+        setLeaderboard(data.leaderboard)
+      }
+    } catch (error) {
+      console.error('Failed to load leaderboard:', error)
+    }
+  }
+
+  const loadAvailableVideos = async () => {
+    try {
+      const data = await videosApi.list(0, 100)
+      if (data.videos) {
+        setAvailableVideos(data.videos)
+      }
+    } catch (error) {
+      console.error('Failed to load videos:', error)
+    }
+  }
+
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files
+    if (!files || files.length === 0) return
+
+    setUploadingVideos(true)
+    const fileArray = Array.from(files)
+
+    for (let i = 0; i < fileArray.length; i++) {
+      const file = fileArray[i]
+      try {
+        setUploadProgress(prev => ({ ...prev, [file.name]: 0 }))
+        await videosApi.upload(file, undefined, (progress) => {
+          setUploadProgress(prev => ({ ...prev, [file.name]: progress }))
+        })
+        setUploadProgress(prev => ({ ...prev, [file.name]: 100 }))
+      } catch (error) {
+        console.error(`Failed to upload ${file.name}:`, error)
+        setUploadProgress(prev => ({ ...prev, [file.name]: -1 }))
+      }
+    }
+
+    setUploadingVideos(false)
+    // Reload videos after upload
+    await loadAvailableVideos()
+    // Clear file input
+    if (fileInputRef.current) {
+      fileInputRef.current.value = ''
+    }
+    setUploadProgress({})
+  }
+
+  const handleCreateExample = async () => {
+    if (!newExample.video_id_1 || !newExample.video_id_2) {
+      alert('Please select both videos')
+      return
+    }
+    if (newExample.video_id_1 === newExample.video_id_2) {
+      alert('Please select two different videos')
+      return
+    }
+
+    setCreatingExample(true)
+    try {
+      await tutorialApi.createTask({
+        video_id_1: newExample.video_id_1,
+        video_id_2: newExample.video_id_2,
+        correct_winner: newExample.correct_winner,
+        correct_degree: newExample.correct_degree,
+        difficulty: newExample.difficulty,
+        description: newExample.description || `Compare these two cows (${newExample.difficulty} difficulty)`,
+        hint: newExample.hint || 'Watch their walking patterns carefully',
+        is_tutorial: true
+      })
+
+      // Reset form
+      setNewExample({
+        video_id_1: '',
+        video_id_2: '',
+        correct_winner: 0,
+        correct_degree: 1,
+        difficulty: 'easy',
+        description: '',
+        hint: ''
+      })
+
+      // Reload examples
+      await loadExamples()
+      alert('Training example created successfully!')
+    } catch (error) {
+      console.error('Failed to create example:', error)
+      alert('Failed to create training example')
+    } finally {
+      setCreatingExample(false)
+    }
+  }
+
+  const getTotalExamples = () => {
+    return Object.values(trainingExamples).reduce((sum, arr) => sum + arr.length, 0)
+  }
+
+  const getFilteredExamples = (): TrainingExample[] => {
+    if (exampleFilter === 'all') {
+      return [...trainingExamples.easy, ...trainingExamples.medium, ...trainingExamples.hard]
+    }
+    return trainingExamples[exampleFilter] || []
+  }
+
+  const handleEditExample = (example: TrainingExample) => {
+    setEditingExample({ ...example })
+    setShowEditExampleModal(true)
+  }
+
+  const handleDeleteExample = async (exampleId: string) => {
+    if (!confirm('Are you sure you want to delete this training example?')) return
+
+    try {
+      await tutorialApi.deleteTask(exampleId)
+      await loadExamples()
+    } catch (error) {
+      console.error('Failed to delete example:', error)
+      alert('Failed to delete training example')
+    }
+  }
+
+  const handleSaveExample = async () => {
+    if (!editingExample) return
+
+    setSavingExample(true)
+    try {
+      await tutorialApi.updateTask(editingExample.id, {
+        video_id_1: editingExample.video_id_1 || '',
+        video_id_2: editingExample.video_id_2 || '',
+        correct_winner: editingExample.correct_winner,
+        correct_degree: editingExample.correct_degree,
+        difficulty: editingExample.difficulty,
+        description: editingExample.description,
+        hint: editingExample.hint,
+        is_tutorial: true
+      })
+      setShowEditExampleModal(false)
+      setEditingExample(null)
+      await loadExamples()
+    } catch (error) {
+      console.error('Failed to update example:', error)
+      alert('Failed to update training example')
+    } finally {
+      setSavingExample(false)
+    }
+  }
+
+  const syncProgress = async () => {
+    setSaving(true)
+    try {
+      const userId = user?.id || localStorage.getItem('training_user_id') || 'anonymous'
+      const tier = getCurrentTier()
+
+      await trainingApi.saveLearnProgress({
+        total_score: totalScore,
+        total_attempts: totalAttempts,
+        correct_count: correctCount,
+        current_level: currentLevel.level,
+        streak: streak,
+        rater_tier: tier.tier.toLowerCase()
+      }, userId)
+
+      // Also save to localStorage as backup
+      localStorage.setItem('training_score', totalScore.toString())
+      localStorage.setItem('training_attempts', totalAttempts.toString())
+      localStorage.setItem('training_correct', correctCount.toString())
+    } catch (error) {
+      console.error('Failed to sync progress:', error)
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const loadNextExample = useCallback(() => {
     setSelectedAnswer(null)
     setShowFeedback(false)
     setShowHint(false)
-    
-    // Get examples for current difficulty
-    const examples = TRAINING_EXAMPLES[currentLevel.difficulty as keyof typeof TRAINING_EXAMPLES]
-    const randomIndex = Math.floor(Math.random() * examples.length)
-    setCurrentExample(examples[randomIndex])
-  }
+    setIsPlaying(false)
 
-  const handleAnswer = (answer: number) => {
-    if (showFeedback) return
-    
+    // Get examples for current difficulty
+    const difficulty = currentLevel.difficulty as keyof typeof trainingExamples
+    const examples = trainingExamples[difficulty] || []
+
+    if (examples.length > 0) {
+      const randomIndex = Math.floor(Math.random() * examples.length)
+      setCurrentExample(examples[randomIndex])
+    } else {
+      // No examples available, show placeholder
+      setCurrentExample({
+        id: 'placeholder',
+        description: 'No training examples available yet',
+        hint: 'Ask an admin to create tutorial examples',
+        correct_winner: 0,
+        correct_degree: 1,
+        difficulty: currentLevel.difficulty
+      })
+    }
+  }, [currentLevel, trainingExamples])
+
+  useEffect(() => {
+    if (!loading && Object.values(trainingExamples).some(arr => arr.length > 0)) {
+      loadNextExample()
+    }
+  }, [currentLevel, trainingExamples, loading, loadNextExample])
+
+  const handleBinaryAnswer = (answer: number) => {
+    if (showFeedback || !currentExample) return
+
     setSelectedAnswer(answer)
     setShowFeedback(true)
-    
-    const isCorrect = answer === currentExample.correctAnswer
+
+    // For binary mode: 0 = healthy, 1 = lame
+    // Map to comparison: if correct_winner is 0 (equal), both answers are "correct"
+    // If correct_winner is 1 or 2, check if user picked the lame one
+    let isCorrect = false
+    if (currentExample.correct_winner === 0) {
+      isCorrect = answer === 0 // Equal means both are similar
+    } else {
+      isCorrect = answer === 1 // Lame is correct if there's a winner
+    }
+
+    processAnswer(isCorrect)
+  }
+
+  const handleComparisonAnswer = (value: number) => {
+    if (showFeedback || !currentExample) return
+
+    setSelectedAnswer(value)
+    setShowFeedback(true)
+
+    // Calculate correct answer from winner and degree
+    let correctValue = 0
+    if (currentExample.correct_winner === 1) {
+      correctValue = -currentExample.correct_degree // A is more lame (negative)
+    } else if (currentExample.correct_winner === 2) {
+      correctValue = currentExample.correct_degree // B is more lame (positive)
+    }
+
+    // Check if answer is within acceptable range (exact or 1 step difference for partial credit)
+    const diff = Math.abs(value - correctValue)
+    const isCorrect = diff === 0
+    const isPartiallyCorrect = diff === 1
+
+    processAnswer(isCorrect, isPartiallyCorrect)
+  }
+
+  const processAnswer = (isCorrect: boolean, isPartiallyCorrect = false) => {
     const newAttempts = totalAttempts + 1
     const newCorrect = correctCount + (isCorrect ? 1 : 0)
     const newAccuracy = newCorrect / newAttempts
-    
+
     setTotalAttempts(newAttempts)
     setCorrectCount(newCorrect)
     setAccuracy(newAccuracy)
-    
+
     if (isCorrect) {
       playSound('correct')
-      const points = currentLevel.level * 2 // More points at higher levels
+      const points = currentLevel.level * 2
       const streakBonus = streak >= 3 ? Math.floor(streak / 3) : 0
       const newScore = totalScore + points + streakBonus
       setTotalScore(newScore)
       setStreak(prev => prev + 1)
-      
+
       if (streak + 1 >= 5 && (streak + 1) % 5 === 0) {
         playSound('streak')
       }
-      
+
       // Check for level up
       const nextLevel = TRAINING_LEVELS.find(l => l.minScore > totalScore && newScore >= l.minScore)
       if (nextLevel) {
@@ -225,6 +548,11 @@ export default function TrainingModule() {
         playSound('levelup')
         setTimeout(() => setShowLevelUp(false), 3000)
       }
+    } else if (isPartiallyCorrect) {
+      // Partial credit: 1 point, reset streak
+      const newScore = totalScore + 1
+      setTotalScore(newScore)
+      setStreak(0)
     } else {
       playSound('incorrect')
       setStreak(0)
@@ -235,8 +563,31 @@ export default function TrainingModule() {
     loadNextExample()
   }
 
+  const togglePlayback = () => {
+    const videos = [videoRef1.current, videoRef2.current].filter(Boolean)
+    if (videos.length > 0) {
+      if (isPlaying) {
+        videos.forEach(v => v?.pause())
+      } else {
+        videos.forEach(v => v?.play())
+      }
+      setIsPlaying(!isPlaying)
+    }
+  }
+
+  const restartVideos = () => {
+    const videos = [videoRef1.current, videoRef2.current].filter(Boolean)
+    videos.forEach(v => {
+      if (v) {
+        v.currentTime = 0
+        v.play()
+      }
+    })
+    setIsPlaying(true)
+  }
+
   const getCurrentTier = () => {
-    const tiers = RATER_TIERS.filter((t: { minAccuracy: number }) => accuracy >= t.minAccuracy)
+    const tiers = RATER_TIERS.filter(t => accuracy >= t.minAccuracy)
     return tiers.length > 0 ? tiers[tiers.length - 1] : RATER_TIERS[0]
   }
 
@@ -247,10 +598,31 @@ export default function TrainingModule() {
     return ((totalScore - prevMinScore) / (nextLevel.minScore - prevMinScore)) * 100
   }
 
+  const getCorrectAnswerValue = () => {
+    if (!currentExample) return 0
+    if (currentExample.correct_winner === 1) {
+      return -currentExample.correct_degree
+    } else if (currentExample.correct_winner === 2) {
+      return currentExample.correct_degree
+    }
+    return 0
+  }
+
   const tier = getCurrentTier()
 
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+          <div className="text-muted-foreground">Loading training module...</div>
+        </div>
+      </div>
+    )
+  }
+
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
+    <div className="max-w-5xl mx-auto space-y-6">
       {/* Header with progress */}
       <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
         <div className="flex justify-between items-start">
@@ -263,9 +635,10 @@ export default function TrainingModule() {
               <span className="text-xl">{tier.icon}</span>
               <span className="font-bold">{tier.tier} Rater</span>
             </div>
+            {saving && <div className="text-xs text-blue-200 mt-1">Saving...</div>}
           </div>
         </div>
-        
+
         <div className="grid grid-cols-4 gap-4 mt-6">
           <div className="bg-white/20 rounded-lg p-3 text-center">
             <div className="text-2xl font-bold">{totalScore}</div>
@@ -284,15 +657,15 @@ export default function TrainingModule() {
             <div className="text-sm text-blue-100">{currentLevel.name}</div>
           </div>
         </div>
-        
+
         {/* Level progress bar */}
         <div className="mt-4">
           <div className="flex justify-between text-sm text-blue-100 mb-1">
             <span>Level {currentLevel.level}</span>
-            <span>Level {currentLevel.level + 1}</span>
+            <span>Level {Math.min(currentLevel.level + 1, 5)}</span>
           </div>
           <div className="h-2 bg-white/30 rounded-full">
-            <div 
+            <div
               className="h-2 bg-yellow-400 rounded-full transition-all"
               style={{ width: `${getProgressToNextLevel()}%` }}
             />
@@ -302,26 +675,48 @@ export default function TrainingModule() {
 
       {/* View tabs */}
       <div className="flex border-b">
-        {['training', 'progress', 'leaderboard'].map((v) => (
+        {['training', 'progress', 'leaderboard', ...(user?.role === 'admin' ? ['setup'] : [])].map((v) => (
           <button
             key={v}
             onClick={() => setView(v as any)}
             className={`px-6 py-3 font-medium capitalize ${
-              view === v 
+              view === v
                 ? 'border-b-2 border-blue-600 text-blue-600'
                 : 'text-gray-500 hover:text-gray-700'
             }`}
           >
-            {v}
+            {v === 'setup' ? 'Setup (Admin)' : v}
           </button>
         ))}
       </div>
 
       {/* Training View */}
-      {view === 'training' && currentExample && (
+      {view === 'training' && (
         <div className="space-y-6">
-          {/* Difficulty indicator */}
+          {/* Mode selector */}
           <div className="flex justify-between items-center">
+            <div className="flex gap-2">
+              <button
+                onClick={() => setTrainingMode('comparison')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  trainingMode === 'comparison'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                7-Point Scale (Recommended)
+              </button>
+              <button
+                onClick={() => setTrainingMode('binary')}
+                className={`px-4 py-2 rounded-lg text-sm font-medium ${
+                  trainingMode === 'binary'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                Binary (Healthy/Lame)
+              </button>
+            </div>
             <span className={`px-3 py-1 rounded-full text-sm font-medium ${
               currentLevel.difficulty === 'easy' ? 'bg-green-100 text-green-700' :
               currentLevel.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' :
@@ -329,122 +724,285 @@ export default function TrainingModule() {
             }`}>
               {currentLevel.difficulty.charAt(0).toUpperCase() + currentLevel.difficulty.slice(1)} Difficulty
             </span>
-            <button
-              onClick={() => setShowHint(!showHint)}
-              className="text-sm text-blue-600 hover:underline"
-            >
-              {showHint ? 'Hide Hint' : 'Need a Hint?'}
-            </button>
           </div>
 
-          {/* Question */}
-          <div className="border rounded-lg p-6 bg-white">
-            <h3 className="text-xl font-semibold mb-2">Is this cow lame?</h3>
-            <p className="text-gray-600">{currentExample.description}</p>
-            
-            {showHint && (
-              <div className="mt-4 p-3 bg-blue-50 rounded-lg text-blue-700 text-sm">
-                💡 <strong>Hint:</strong> {currentExample.hint}
-              </div>
-            )}
-          </div>
+          {currentExample && (
+            <>
+              {/* Question */}
+              <div className="border rounded-lg p-6 bg-white">
+                <h3 className="text-xl font-semibold mb-2">
+                  {trainingMode === 'comparison'
+                    ? 'Which cow is more lame?'
+                    : 'Is this cow showing lameness?'}
+                </h3>
+                <p className="text-gray-600">{currentExample.description}</p>
 
-          {/* Video */}
-          <div className="border rounded-lg overflow-hidden bg-black">
-            {/* In production, load actual video */}
-            <div className="aspect-video flex items-center justify-center bg-gray-800">
-              <div className="text-center text-white">
-                <div className="text-4xl mb-2">🐄</div>
-                <p>Training Video: {currentExample.id}</p>
-                <p className="text-sm text-gray-400 mt-1">(Demo - actual video would play here)</p>
-              </div>
-            </div>
-          </div>
-
-          {/* Answer buttons */}
-          <div className="grid grid-cols-2 gap-4">
-            <button
-              onClick={() => handleAnswer(0)}
-              disabled={showFeedback}
-              className={`p-6 rounded-xl border-2 transition-all ${
-                showFeedback
-                  ? selectedAnswer === 0
-                    ? currentExample.correctAnswer === 0
-                      ? 'border-green-500 bg-green-50'
-                      : 'border-red-500 bg-red-50'
-                    : currentExample.correctAnswer === 0
-                      ? 'border-green-500 bg-green-50 opacity-50'
-                      : 'border-gray-200 opacity-50'
-                  : 'border-green-200 hover:border-green-400 hover:bg-green-50'
-              }`}
-            >
-              <div className="text-4xl mb-2">✓</div>
-              <div className="font-bold text-lg text-green-700">Healthy</div>
-              <div className="text-sm text-gray-500">No lameness detected</div>
-            </button>
-            
-            <button
-              onClick={() => handleAnswer(1)}
-              disabled={showFeedback}
-              className={`p-6 rounded-xl border-2 transition-all ${
-                showFeedback
-                  ? selectedAnswer === 1
-                    ? currentExample.correctAnswer === 1
-                      ? 'border-green-500 bg-green-50'
-                      : 'border-red-500 bg-red-50'
-                    : currentExample.correctAnswer === 1
-                      ? 'border-green-500 bg-green-50 opacity-50'
-                      : 'border-gray-200 opacity-50'
-                  : 'border-red-200 hover:border-red-400 hover:bg-red-50'
-              }`}
-            >
-              <div className="text-4xl mb-2">✗</div>
-              <div className="font-bold text-lg text-red-700">Lame</div>
-              <div className="text-sm text-gray-500">Shows lameness signs</div>
-            </button>
-          </div>
-
-          {/* Feedback */}
-          {showFeedback && (
-            <div className={`p-4 rounded-lg ${
-              selectedAnswer === currentExample.correctAnswer
-                ? 'bg-green-100 border border-green-300'
-                : 'bg-red-100 border border-red-300'
-            }`}>
-              <div className="flex items-start gap-3">
-                <span className="text-2xl">
-                  {selectedAnswer === currentExample.correctAnswer ? '🎉' : '📚'}
-                </span>
-                <div>
-                  <h4 className={`font-bold ${
-                    selectedAnswer === currentExample.correctAnswer ? 'text-green-800' : 'text-red-800'
-                  }`}>
-                    {selectedAnswer === currentExample.correctAnswer ? 'Correct!' : 'Not quite right'}
-                  </h4>
-                  <p className="text-sm mt-1">{currentExample.feedback}</p>
-                  
-                  {selectedAnswer === currentExample.correctAnswer && streak >= 3 && (
-                    <div className="mt-2 text-orange-600 font-medium">
-                      🔥 {streak} streak! +{Math.floor(streak / 3)} bonus points!
-                    </div>
-                  )}
+                <div className="flex justify-between items-center mt-4">
+                  <button
+                    onClick={() => setShowHint(!showHint)}
+                    className="text-sm text-blue-600 hover:underline"
+                  >
+                    {showHint ? 'Hide Hint' : 'Need a Hint?'}
+                  </button>
                 </div>
+
+                {showHint && (
+                  <div className="mt-4 p-3 bg-blue-50 rounded-lg text-blue-700 text-sm">
+                    💡 <strong>Hint:</strong> {currentExample.hint}
+                  </div>
+                )}
               </div>
-              
-              <button
-                onClick={handleNext}
-                className="mt-4 w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
-              >
-                Next Example →
-              </button>
+
+              {/* Video comparison */}
+              {trainingMode === 'comparison' && currentExample.video_id_1 && currentExample.video_id_2 ? (
+                <div className="grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-center mb-2">
+                      <span className="inline-block px-3 py-1 bg-blue-100 text-blue-800 rounded-full text-sm font-medium">
+                        Cow A
+                      </span>
+                    </div>
+                    <div className="border rounded-lg overflow-hidden bg-black">
+                      <video
+                        ref={videoRef1}
+                        src={videosApi.getStreamUrl(currentExample.video_id_1)}
+                        className="w-full aspect-video"
+                        loop
+                        muted
+                        playsInline
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-center mb-2">
+                      <span className="inline-block px-3 py-1 bg-purple-100 text-purple-800 rounded-full text-sm font-medium">
+                        Cow B
+                      </span>
+                    </div>
+                    <div className="border rounded-lg overflow-hidden bg-black">
+                      <video
+                        ref={videoRef2}
+                        src={videosApi.getStreamUrl(currentExample.video_id_2)}
+                        className="w-full aspect-video"
+                        loop
+                        muted
+                        playsInline
+                      />
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="border rounded-lg overflow-hidden bg-gray-800">
+                  <div className="aspect-video flex items-center justify-center">
+                    <div className="text-center text-white">
+                      <div className="text-6xl mb-4">🐄</div>
+                      <p className="text-lg">Training Example</p>
+                      <p className="text-sm text-gray-400 mt-1">{currentExample.description}</p>
+                      {currentExample.is_auto_generated && (
+                        <p className="text-xs text-yellow-400 mt-2">
+                          (Auto-generated example - actual answer may vary)
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Video controls */}
+              {currentExample.video_id_1 && (
+                <div className="flex justify-center gap-4">
+                  <button
+                    onClick={restartVideos}
+                    className="px-6 py-2 border rounded-lg hover:bg-accent"
+                  >
+                    ↺ Restart
+                  </button>
+                  <button
+                    onClick={togglePlayback}
+                    className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
+                  >
+                    {isPlaying ? '⏸ Pause' : '▶ Play'}
+                  </button>
+                </div>
+              )}
+
+              {/* Answer buttons */}
+              {trainingMode === 'comparison' ? (
+                <div className="space-y-4">
+                  <p className="text-center text-sm text-gray-500">
+                    Select how much more lame one cow is compared to the other
+                  </p>
+                  <div className="grid grid-cols-7 gap-2">
+                    {SCALE_LABELS.map((item) => {
+                      const correctValue = getCorrectAnswerValue()
+                      const isSelected = selectedAnswer === item.value
+                      const isCorrect = showFeedback && item.value === correctValue
+                      const isWrong = showFeedback && isSelected && item.value !== correctValue
+
+                      return (
+                        <button
+                          key={item.value}
+                          onClick={() => handleComparisonAnswer(item.value)}
+                          disabled={showFeedback}
+                          className={`p-3 rounded-lg border-2 transition-all text-center ${
+                            showFeedback
+                              ? isCorrect
+                                ? 'border-green-500 bg-green-50'
+                                : isWrong
+                                  ? 'border-red-500 bg-red-50'
+                                  : 'border-gray-200 opacity-50'
+                              : isSelected
+                                ? 'border-blue-500 bg-blue-50'
+                                : 'border-gray-200 hover:border-blue-300 hover:bg-blue-50'
+                          }`}
+                        >
+                          <div className="text-lg font-bold">{item.short}</div>
+                          <div className="text-xs text-gray-500 mt-1">{item.label}</div>
+                        </button>
+                      )
+                    })}
+                  </div>
+                  <div className="flex justify-between text-xs text-gray-400 px-4">
+                    <span>← A is more lame</span>
+                    <span>B is more lame →</span>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid grid-cols-2 gap-4">
+                  <button
+                    onClick={() => handleBinaryAnswer(0)}
+                    disabled={showFeedback}
+                    className={`p-6 rounded-xl border-2 transition-all ${
+                      showFeedback
+                        ? selectedAnswer === 0
+                          ? currentExample.correct_winner === 0
+                            ? 'border-green-500 bg-green-50'
+                            : 'border-red-500 bg-red-50'
+                          : currentExample.correct_winner === 0
+                            ? 'border-green-500 bg-green-50 opacity-50'
+                            : 'border-gray-200 opacity-50'
+                        : 'border-green-200 hover:border-green-400 hover:bg-green-50'
+                    }`}
+                  >
+                    <div className="text-4xl mb-2">✓</div>
+                    <div className="font-bold text-lg text-green-700">Healthy</div>
+                    <div className="text-sm text-gray-500">No lameness detected</div>
+                  </button>
+
+                  <button
+                    onClick={() => handleBinaryAnswer(1)}
+                    disabled={showFeedback}
+                    className={`p-6 rounded-xl border-2 transition-all ${
+                      showFeedback
+                        ? selectedAnswer === 1
+                          ? currentExample.correct_winner !== 0
+                            ? 'border-green-500 bg-green-50'
+                            : 'border-red-500 bg-red-50'
+                          : currentExample.correct_winner !== 0
+                            ? 'border-green-500 bg-green-50 opacity-50'
+                            : 'border-gray-200 opacity-50'
+                        : 'border-red-200 hover:border-red-400 hover:bg-red-50'
+                    }`}
+                  >
+                    <div className="text-4xl mb-2">✗</div>
+                    <div className="font-bold text-lg text-red-700">Lame</div>
+                    <div className="text-sm text-gray-500">Shows lameness signs</div>
+                  </button>
+                </div>
+              )}
+
+              {/* Feedback */}
+              {showFeedback && (
+                <div className={`p-4 rounded-lg ${
+                  selectedAnswer === getCorrectAnswerValue() ||
+                  (trainingMode === 'binary' && (
+                    (selectedAnswer === 0 && currentExample.correct_winner === 0) ||
+                    (selectedAnswer === 1 && currentExample.correct_winner !== 0)
+                  ))
+                    ? 'bg-green-100 border border-green-300'
+                    : Math.abs((selectedAnswer || 0) - getCorrectAnswerValue()) === 1
+                      ? 'bg-yellow-100 border border-yellow-300'
+                      : 'bg-red-100 border border-red-300'
+                }`}>
+                  <div className="flex items-start gap-3">
+                    <span className="text-2xl">
+                      {selectedAnswer === getCorrectAnswerValue() ||
+                       (trainingMode === 'binary' && (
+                         (selectedAnswer === 0 && currentExample.correct_winner === 0) ||
+                         (selectedAnswer === 1 && currentExample.correct_winner !== 0)
+                       ))
+                        ? '🎉'
+                        : Math.abs((selectedAnswer || 0) - getCorrectAnswerValue()) === 1
+                          ? '👍'
+                          : '📚'}
+                    </span>
+                    <div>
+                      <h4 className={`font-bold ${
+                        selectedAnswer === getCorrectAnswerValue() ||
+                        (trainingMode === 'binary' && (
+                          (selectedAnswer === 0 && currentExample.correct_winner === 0) ||
+                          (selectedAnswer === 1 && currentExample.correct_winner !== 0)
+                        ))
+                          ? 'text-green-800'
+                          : Math.abs((selectedAnswer || 0) - getCorrectAnswerValue()) === 1
+                            ? 'text-yellow-800'
+                            : 'text-red-800'
+                      }`}>
+                        {selectedAnswer === getCorrectAnswerValue() ||
+                         (trainingMode === 'binary' && (
+                           (selectedAnswer === 0 && currentExample.correct_winner === 0) ||
+                           (selectedAnswer === 1 && currentExample.correct_winner !== 0)
+                         ))
+                          ? 'Correct!'
+                          : Math.abs((selectedAnswer || 0) - getCorrectAnswerValue()) === 1
+                            ? 'Close! (+1 partial credit)'
+                            : 'Not quite right'}
+                      </h4>
+                      <p className="text-sm mt-1">
+                        {trainingMode === 'comparison' && (
+                          <>The correct answer was: <strong>{SCALE_LABELS.find(s => s.value === getCorrectAnswerValue())?.label}</strong></>
+                        )}
+                      </p>
+
+                      {streak >= 3 && selectedAnswer === getCorrectAnswerValue() && (
+                        <div className="mt-2 text-orange-600 font-medium">
+                          🔥 {streak} streak! +{Math.floor(streak / 3)} bonus points!
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <button
+                    onClick={handleNext}
+                    className="mt-4 w-full py-3 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700"
+                  >
+                    Next Example →
+                  </button>
+                </div>
+              )}
+            </>
+          )}
+
+          {/* No examples message */}
+          {!currentExample && !loading && (
+            <div className="text-center py-12 border rounded-lg">
+              <div className="text-4xl mb-4">📝</div>
+              <h3 className="text-xl font-bold mb-2">No Training Examples Available</h3>
+              <p className="text-gray-500">
+                Ask an administrator to create tutorial examples in the Tutorial Management page.
+              </p>
             </div>
           )}
 
-          {/* Keyboard hints */}
-          <div className="text-center text-xs text-gray-400">
-            Press <kbd className="px-1 bg-gray-100 rounded">H</kbd> for healthy,{' '}
-            <kbd className="px-1 bg-gray-100 rounded">L</kbd> for lame,{' '}
-            <kbd className="px-1 bg-gray-100 rounded">?</kbd> for hint
+          {/* Training tips */}
+          <div className="bg-gray-50 rounded-lg p-4 text-sm text-gray-600">
+            <h4 className="font-semibold mb-2">Training Tips</h4>
+            <ul className="list-disc list-inside space-y-1">
+              <li>Watch both videos completely before making a decision</li>
+              <li>Look for: arched back, head bobbing, uneven stride, hesitation</li>
+              <li>The 7-point scale matches real pairwise comparison tasks</li>
+              <li>Reach 85% accuracy to become a Gold tier rater</li>
+            </ul>
           </div>
         </div>
       )}
@@ -454,7 +1012,7 @@ export default function TrainingModule() {
         <div className="space-y-6">
           <div className="border rounded-lg p-6">
             <h3 className="text-xl font-bold mb-4">Your Progress</h3>
-            
+
             <div className="grid grid-cols-2 gap-6">
               <div>
                 <h4 className="font-medium text-gray-500 mb-2">Statistics</h4>
@@ -481,7 +1039,7 @@ export default function TrainingModule() {
                   </div>
                 </dl>
               </div>
-              
+
               <div>
                 <h4 className="font-medium text-gray-500 mb-2">Rater Status</h4>
                 <div className={`p-4 rounded-lg ${tier.bgColor}`}>
@@ -490,14 +1048,14 @@ export default function TrainingModule() {
                     <div>
                       <div className={`text-xl font-bold ${tier.color}`}>{tier.tier} Rater</div>
                       <div className="text-sm text-gray-600">
-                        {accuracy >= 0.85 
+                        {accuracy >= 0.85
                           ? 'Qualified for real labeling tasks!'
-                          : `Need ${((0.85 - accuracy) * 100).toFixed(0)}% more to reach Gold`}
+                          : `Need ${((0.85 - accuracy) * 100).toFixed(0)}% more accuracy to reach Gold`}
                       </div>
                     </div>
                   </div>
                 </div>
-                
+
                 {accuracy >= 0.85 && (
                   <div className="mt-4 p-3 bg-green-100 rounded-lg">
                     <p className="text-green-800 font-medium">
@@ -520,12 +1078,12 @@ export default function TrainingModule() {
             <h3 className="text-xl font-bold mb-4">Level Progression</h3>
             <div className="space-y-4">
               {TRAINING_LEVELS.map((level) => (
-                <div 
+                <div
                   key={level.level}
                   className={`flex items-center gap-4 p-3 rounded-lg ${
-                    currentLevel.level === level.level 
+                    currentLevel.level === level.level
                       ? 'bg-blue-100 border-2 border-blue-300'
-                      : totalScore >= level.minScore 
+                      : totalScore >= level.minScore
                         ? 'bg-green-50'
                         : 'bg-gray-50'
                   }`}
@@ -552,12 +1110,16 @@ export default function TrainingModule() {
           {/* Reset progress */}
           <button
             onClick={() => {
-              if (confirm('Are you sure you want to reset all progress?')) {
+              if (confirm('Are you sure you want to reset all progress? This cannot be undone.')) {
                 localStorage.removeItem('training_score')
                 localStorage.removeItem('training_attempts')
                 localStorage.removeItem('training_correct')
-                localStorage.removeItem('training_accuracy')
-                window.location.reload()
+                setTotalScore(0)
+                setTotalAttempts(0)
+                setCorrectCount(0)
+                setStreak(0)
+                setAccuracy(0)
+                setCurrentLevel(TRAINING_LEVELS[0])
               }
             }}
             className="text-red-600 text-sm hover:underline"
@@ -570,34 +1132,648 @@ export default function TrainingModule() {
       {/* Leaderboard View */}
       {view === 'leaderboard' && (
         <div className="border rounded-lg p-6">
-          <h3 className="text-xl font-bold mb-4">Leaderboard</h3>
-          <p className="text-gray-500 mb-4">Coming soon! Compete with other trainees.</p>
-          
-          {/* Placeholder leaderboard */}
-          <div className="space-y-2">
-            {[
-              { rank: 1, name: 'ExpertRater', score: 500, tier: '🥇' },
-              { rank: 2, name: 'CowObserver', score: 350, tier: '🥈' },
-              { rank: 3, name: 'VetStudent', score: 280, tier: '🥉' },
-              { rank: 4, name: 'You', score: totalScore, tier: tier.icon, isYou: true },
-              { rank: 5, name: 'Learner123', score: 100, tier: '🥉' },
-            ].sort((a, b) => b.score - a.score).map((entry, idx) => (
-              <div 
-                key={entry.name}
-                className={`flex items-center gap-3 p-3 rounded-lg ${
-                  entry.isYou ? 'bg-blue-100 border-2 border-blue-300' : 'bg-gray-50'
-                }`}
-              >
-                <div className="w-8 text-center font-bold text-gray-500">#{idx + 1}</div>
-                <div className="text-xl">{entry.tier}</div>
-                <div className="flex-1 font-medium">
-                  {entry.name}
-                  {entry.isYou && <span className="ml-2 text-blue-600">(You)</span>}
-                </div>
-                <div className="font-bold text-purple-600">{entry.score} pts</div>
-              </div>
-            ))}
+          <div className="flex justify-between items-center mb-4">
+            <h3 className="text-xl font-bold">Leaderboard</h3>
+            <button
+              onClick={loadLeaderboard}
+              className="text-sm text-blue-600 hover:underline"
+            >
+              Refresh
+            </button>
           </div>
+
+          {leaderboard.length > 0 ? (
+            <div className="space-y-2">
+              {leaderboard.map((entry, idx) => {
+                const isCurrentUser = user?.id === entry.user_id ||
+                  (!user && entry.user_id === 'anonymous')
+                const tierIcon = RATER_TIERS.find(t => t.tier.toLowerCase() === entry.rater_tier)?.icon || '🥉'
+
+                return (
+                  <div
+                    key={entry.user_id}
+                    className={`flex items-center gap-3 p-3 rounded-lg ${
+                      isCurrentUser ? 'bg-blue-100 border-2 border-blue-300' : 'bg-gray-50'
+                    }`}
+                  >
+                    <div className={`w-8 text-center font-bold ${
+                      entry.rank === 1 ? 'text-yellow-500' :
+                      entry.rank === 2 ? 'text-gray-400' :
+                      entry.rank === 3 ? 'text-orange-400' :
+                      'text-gray-500'
+                    }`}>
+                      #{entry.rank}
+                    </div>
+                    <div className="text-xl">{tierIcon}</div>
+                    <div className="flex-1">
+                      <div className="font-medium">
+                        {entry.username}
+                        {isCurrentUser && <span className="ml-2 text-blue-600">(You)</span>}
+                      </div>
+                      <div className="text-xs text-gray-500">
+                        Level {entry.current_level} • {(entry.accuracy * 100).toFixed(0)}% accuracy
+                      </div>
+                    </div>
+                    <div className="font-bold text-purple-600">{entry.total_score} pts</div>
+                  </div>
+                )
+              })}
+            </div>
+          ) : (
+            <div className="text-center py-8 text-gray-500">
+              <p>No leaderboard data yet.</p>
+              <p className="text-sm">Complete some training to appear on the leaderboard!</p>
+            </div>
+          )}
+
+          {/* Add current user if not in leaderboard */}
+          {totalAttempts > 0 && !leaderboard.some(e => e.user_id === (user?.id || 'anonymous')) && (
+            <div className="mt-4 pt-4 border-t">
+              <div className="flex items-center gap-3 p-3 rounded-lg bg-blue-100 border-2 border-blue-300">
+                <div className="w-8 text-center font-bold text-gray-500">—</div>
+                <div className="text-xl">{tier.icon}</div>
+                <div className="flex-1">
+                  <div className="font-medium">
+                    {user?.username || 'Anonymous'} <span className="text-blue-600">(You)</span>
+                  </div>
+                  <div className="text-xs text-gray-500">
+                    Level {currentLevel.level} • {(accuracy * 100).toFixed(0)}% accuracy
+                  </div>
+                </div>
+                <div className="font-bold text-purple-600">{totalScore} pts</div>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Setup View (Admin Only) */}
+      {view === 'setup' && user?.role === 'admin' && (
+        <div className="space-y-6">
+          {/* Status */}
+          <div className="grid grid-cols-3 gap-4">
+            <div className="border rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-blue-600">{availableVideos.length}</div>
+              <div className="text-sm text-gray-500">Videos Uploaded</div>
+            </div>
+            <div className="border rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-green-600">{getTotalExamples()}</div>
+              <div className="text-sm text-gray-500">Training Examples</div>
+            </div>
+            <div className="border rounded-lg p-4 text-center">
+              <div className="text-3xl font-bold text-purple-600">
+                {trainingExamples.easy.length} / {trainingExamples.medium.length} / {trainingExamples.hard.length}
+              </div>
+              <div className="text-sm text-gray-500">Easy / Medium / Hard</div>
+            </div>
+          </div>
+
+          {/* Upload Videos Section */}
+          <div className="border rounded-lg p-6">
+            <h3 className="text-xl font-bold mb-4">Step 1: Upload Videos</h3>
+            <p className="text-gray-600 mb-4">
+              Upload cow walking videos to use for training examples.
+            </p>
+
+            <div className="border-2 border-dashed border-gray-300 rounded-lg p-8 text-center">
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept="video/*"
+                multiple
+                onChange={handleFileUpload}
+                className="hidden"
+                id="video-upload"
+              />
+              <label
+                htmlFor="video-upload"
+                className="cursor-pointer"
+              >
+                <div className="text-4xl mb-2">📹</div>
+                <div className="text-lg font-medium">
+                  {uploadingVideos ? 'Uploading...' : 'Click to upload videos'}
+                </div>
+                <div className="text-sm text-gray-500 mt-1">
+                  Supports MP4, AVI, MOV, MKV
+                </div>
+              </label>
+            </div>
+
+            {/* Upload Progress */}
+            {Object.keys(uploadProgress).length > 0 && (
+              <div className="mt-4 space-y-2">
+                {Object.entries(uploadProgress).map(([name, progress]) => (
+                  <div key={name} className="flex items-center gap-3">
+                    <div className="flex-1 text-sm truncate">{name}</div>
+                    <div className="w-32">
+                      <div className="h-2 bg-gray-200 rounded-full">
+                        <div
+                          className={`h-2 rounded-full ${progress === -1 ? 'bg-red-500' : 'bg-blue-500'}`}
+                          style={{ width: `${progress === -1 ? 100 : progress}%` }}
+                        />
+                      </div>
+                    </div>
+                    <div className="w-12 text-sm text-right">
+                      {progress === -1 ? 'Error' : `${progress}%`}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Create Training Example Section */}
+          <div className="border rounded-lg p-6">
+            <h3 className="text-xl font-bold mb-4">Step 2: Create Training Example</h3>
+            <p className="text-gray-600 mb-4">
+              Drag videos from below to the drop zones, then set the correct answer.
+            </p>
+
+            <div className="grid grid-cols-2 gap-6">
+              {/* Video A Drop Zone */}
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Video A (Cow A)
+                  {newExample.video_id_1 && (
+                    <button
+                      onClick={() => setNewExample({ ...newExample, video_id_1: '' })}
+                      className="ml-2 text-xs text-red-500 hover:text-red-700"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </label>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500', 'bg-blue-50') }}
+                  onDragLeave={(e) => { e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50') }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
+                    const videoId = e.dataTransfer.getData('video_id')
+                    if (videoId && videoId !== newExample.video_id_2) {
+                      setNewExample({ ...newExample, video_id_1: videoId })
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-lg overflow-hidden transition-all ${
+                    newExample.video_id_1 ? 'border-blue-400 bg-blue-50' : 'border-gray-300'
+                  }`}
+                >
+                  {newExample.video_id_1 ? (
+                    <div className="relative">
+                      <video
+                        src={videosApi.getStreamUrl(newExample.video_id_1)}
+                        className="w-full aspect-video object-cover"
+                        controls
+                        muted
+                      />
+                      <div className="absolute top-2 left-2 px-2 py-1 bg-blue-500 text-white text-xs font-bold rounded">
+                        A
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="aspect-video flex flex-col items-center justify-center text-gray-400">
+                      <span className="text-4xl mb-2">📥</span>
+                      <span className="text-sm">Drop Video A here</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Video B Drop Zone */}
+              <div>
+                <label className="block text-sm font-medium mb-2">
+                  Video B (Cow B)
+                  {newExample.video_id_2 && (
+                    <button
+                      onClick={() => setNewExample({ ...newExample, video_id_2: '' })}
+                      className="ml-2 text-xs text-red-500 hover:text-red-700"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </label>
+                <div
+                  onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-green-500', 'bg-green-50') }}
+                  onDragLeave={(e) => { e.currentTarget.classList.remove('border-green-500', 'bg-green-50') }}
+                  onDrop={(e) => {
+                    e.preventDefault()
+                    e.currentTarget.classList.remove('border-green-500', 'bg-green-50')
+                    const videoId = e.dataTransfer.getData('video_id')
+                    if (videoId && videoId !== newExample.video_id_1) {
+                      setNewExample({ ...newExample, video_id_2: videoId })
+                    }
+                  }}
+                  className={`border-2 border-dashed rounded-lg overflow-hidden transition-all ${
+                    newExample.video_id_2 ? 'border-green-400 bg-green-50' : 'border-gray-300'
+                  }`}
+                >
+                  {newExample.video_id_2 ? (
+                    <div className="relative">
+                      <video
+                        src={videosApi.getStreamUrl(newExample.video_id_2)}
+                        className="w-full aspect-video object-cover"
+                        controls
+                        muted
+                      />
+                      <div className="absolute top-2 left-2 px-2 py-1 bg-green-500 text-white text-xs font-bold rounded">
+                        B
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="aspect-video flex flex-col items-center justify-center text-gray-400">
+                      <span className="text-4xl mb-2">📥</span>
+                      <span className="text-sm">Drop Video B here</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+
+            {/* Available Videos - Draggable */}
+            {availableVideos.length > 0 && (
+              <div className="mt-6 border-t pt-4">
+                <h4 className="font-medium mb-2">Available Videos ({availableVideos.length}) - Drag to drop zones above</h4>
+                <div className="grid grid-cols-6 gap-2 max-h-64 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                  {availableVideos.map((video) => {
+                    const isSelectedA = newExample.video_id_1 === video.video_id
+                    const isSelectedB = newExample.video_id_2 === video.video_id
+                    return (
+                      <div
+                        key={video.video_id}
+                        draggable
+                        onDragStart={(e) => {
+                          e.dataTransfer.setData('video_id', video.video_id)
+                          e.dataTransfer.effectAllowed = 'copy'
+                        }}
+                        className={`relative border-2 rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all ${
+                          isSelectedA ? 'border-blue-500 ring-2 ring-blue-200' :
+                          isSelectedB ? 'border-green-500 ring-2 ring-green-200' :
+                          'border-gray-200 hover:border-gray-400 hover:shadow-md bg-white'
+                        }`}
+                      >
+                        <div className="relative">
+                          <video
+                            src={videosApi.getStreamUrl(video.video_id)}
+                            className="w-full aspect-video object-cover bg-gray-100"
+                            muted
+                            onMouseEnter={(e) => e.currentTarget.play()}
+                            onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
+                          />
+                          {(isSelectedA || isSelectedB) && (
+                            <div className={`absolute top-1 right-1 px-1.5 py-0.5 rounded text-xs font-bold text-white ${
+                              isSelectedA ? 'bg-blue-500' : 'bg-green-500'
+                            }`}>
+                              {isSelectedA ? 'A' : 'B'}
+                            </div>
+                          )}
+                        </div>
+                        <div className="p-1 text-[10px] truncate bg-white border-t text-center">
+                          {(video.filename || video.video_id).slice(0, 8)}...
+                        </div>
+                      </div>
+                    )
+                  })}
+                </div>
+              </div>
+            )}
+
+            {/* Correct Answer */}
+            <div className="mt-6">
+              <label className="block text-sm font-medium mb-2">Correct Answer (Which cow is more lame?)</label>
+              <select
+                value={`${newExample.correct_winner}:${newExample.correct_degree}`}
+                onChange={(e) => {
+                  const [winner, degree] = e.target.value.split(':').map(Number)
+                  setNewExample({ ...newExample, correct_winner: winner, correct_degree: degree })
+                }}
+                className="w-full p-2 border rounded-lg"
+              >
+                <option value="1:3">A Much More Lame (-3)</option>
+                <option value="1:2">A More Lame (-2)</option>
+                <option value="1:1">A Slightly More Lame (-1)</option>
+                <option value="0:1">Equal / Cannot Decide (0)</option>
+                <option value="2:1">B Slightly More Lame (+1)</option>
+                <option value="2:2">B More Lame (+2)</option>
+                <option value="2:3">B Much More Lame (+3)</option>
+              </select>
+            </div>
+
+            {/* Difficulty */}
+            <div className="mt-4">
+              <label className="block text-sm font-medium mb-2">Difficulty Level</label>
+              <select
+                value={newExample.difficulty}
+                onChange={(e) => setNewExample({ ...newExample, difficulty: e.target.value })}
+                className="w-full p-2 border rounded-lg"
+              >
+                <option value="easy">Easy (Obvious difference)</option>
+                <option value="medium">Medium (Moderate difference)</option>
+                <option value="hard">Hard (Subtle difference)</option>
+              </select>
+            </div>
+
+            {/* Optional Fields */}
+            <div className="mt-4 grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium mb-2">Description (Optional)</label>
+                <input
+                  type="text"
+                  value={newExample.description}
+                  onChange={(e) => setNewExample({ ...newExample, description: e.target.value })}
+                  placeholder="e.g., Compare these two cows walking"
+                  className="w-full p-2 border rounded-lg"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium mb-2">Hint (Optional)</label>
+                <input
+                  type="text"
+                  value={newExample.hint}
+                  onChange={(e) => setNewExample({ ...newExample, hint: e.target.value })}
+                  placeholder="e.g., Look at the back arch"
+                  className="w-full p-2 border rounded-lg"
+                />
+              </div>
+            </div>
+
+            {/* Create Button */}
+            <div className="mt-6">
+              <button
+                onClick={handleCreateExample}
+                disabled={creatingExample || !newExample.video_id_1 || !newExample.video_id_2}
+                className="w-full py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {creatingExample ? 'Creating...' : 'Create Training Example'}
+              </button>
+            </div>
+          </div>
+
+          {/* Existing Examples - Table Format Like TutorialManagement */}
+          <div className="border rounded-lg p-6">
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-xl font-bold">Existing Training Examples</h3>
+              <button
+                onClick={loadExamples}
+                className="text-sm text-blue-600 hover:underline"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {/* Filter tabs by difficulty */}
+            <div className="flex gap-2 border-b mb-4">
+              {(['all', 'easy', 'medium', 'hard'] as const).map((tab) => {
+                const count = tab === 'all'
+                  ? getTotalExamples()
+                  : trainingExamples[tab as keyof typeof trainingExamples]?.length || 0
+                return (
+                  <button
+                    key={tab}
+                    onClick={() => setExampleFilter(tab)}
+                    className={`px-4 py-2 text-sm font-medium transition-colors ${
+                      exampleFilter === tab
+                        ? 'text-primary border-b-2 border-primary'
+                        : 'text-muted-foreground hover:text-foreground'
+                    }`}
+                  >
+                    {tab === 'all' ? 'All' : tab.charAt(0).toUpperCase() + tab.slice(1)} ({count})
+                  </button>
+                )
+              })}
+            </div>
+
+            {getTotalExamples() === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                <p>No training examples yet.</p>
+                <p className="text-sm">Upload videos and create examples above.</p>
+              </div>
+            ) : (
+              <div className="border rounded-lg overflow-hidden">
+                <table className="w-full">
+                  <thead className="bg-gray-50">
+                    <tr>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Videos</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Correct Answer</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Difficulty</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Description</th>
+                      <th className="px-4 py-3 text-left text-sm font-medium text-gray-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y">
+                    {getFilteredExamples().map((ex) => {
+                      const correctValue = ex.correct_winner === 1 ? -ex.correct_degree :
+                                          ex.correct_winner === 2 ? ex.correct_degree : 0
+                      const answerLabel = SCALE_LABELS.find(s => s.value === correctValue)?.label || 'Equal'
+
+                      return (
+                        <tr key={ex.id} className="hover:bg-gray-50">
+                          <td className="px-4 py-3">
+                            <div className="flex items-center gap-2">
+                              {ex.video_id_1 ? (
+                                <div className="w-24 h-14 bg-gray-100 rounded overflow-hidden relative group">
+                                  <video
+                                    src={videosApi.getStreamUrl(ex.video_id_1)}
+                                    className="w-full h-full object-cover"
+                                    muted
+                                    onMouseEnter={(e) => e.currentTarget.play()}
+                                    onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
+                                  />
+                                  <div className="absolute top-1 left-1 px-1 py-0.5 bg-blue-500 text-white text-xs font-bold rounded">A</div>
+                                </div>
+                              ) : (
+                                <div className="w-24 h-14 bg-gray-200 rounded flex items-center justify-center text-gray-400">A</div>
+                              )}
+                              <span className="text-gray-400">vs</span>
+                              {ex.video_id_2 ? (
+                                <div className="w-24 h-14 bg-gray-100 rounded overflow-hidden relative group">
+                                  <video
+                                    src={videosApi.getStreamUrl(ex.video_id_2)}
+                                    className="w-full h-full object-cover"
+                                    muted
+                                    onMouseEnter={(e) => e.currentTarget.play()}
+                                    onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
+                                  />
+                                  <div className="absolute top-1 left-1 px-1 py-0.5 bg-green-500 text-white text-xs font-bold rounded">B</div>
+                                </div>
+                              ) : (
+                                <div className="w-24 h-14 bg-gray-200 rounded flex items-center justify-center text-gray-400">B</div>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-sm">{answerLabel}</td>
+                          <td className="px-4 py-3">
+                            <span className={`px-2 py-1 rounded-full text-xs font-medium capitalize ${
+                              ex.difficulty === 'easy' ? 'bg-green-100 text-green-700' :
+                              ex.difficulty === 'medium' ? 'bg-yellow-100 text-yellow-700' :
+                              'bg-red-100 text-red-700'
+                            }`}>
+                              {ex.difficulty}
+                            </span>
+                            {ex.is_auto_generated && (
+                              <span className="ml-1 px-1 py-0.5 bg-gray-100 text-gray-500 text-xs rounded">Auto</span>
+                            )}
+                          </td>
+                          <td className="px-4 py-3 text-sm text-gray-600 max-w-xs truncate">
+                            {ex.description || '-'}
+                          </td>
+                          <td className="px-4 py-3">
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => handleEditExample(ex)}
+                                className="px-3 py-1 text-sm border rounded hover:bg-accent"
+                              >
+                                Edit
+                              </button>
+                              <button
+                                onClick={() => handleDeleteExample(ex.id)}
+                                className="px-3 py-1 text-sm text-red-600 border border-red-200 rounded hover:bg-red-50"
+                              >
+                                Delete
+                              </button>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                    {getFilteredExamples().length === 0 && (
+                      <tr>
+                        <td colSpan={5} className="px-4 py-8 text-center text-muted-foreground">
+                          No examples found for this filter.
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Edit Example Modal */}
+          {showEditExampleModal && editingExample && (
+            <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+              <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+                <h3 className="text-lg font-semibold mb-4">Edit Training Example</h3>
+
+                <div className="space-y-4">
+                  {/* Video Previews */}
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Video A</label>
+                      {editingExample.video_id_1 ? (
+                        <div className="aspect-video bg-black rounded overflow-hidden">
+                          <video
+                            src={videosApi.getStreamUrl(editingExample.video_id_1)}
+                            className="w-full h-full object-contain"
+                            controls
+                            muted
+                          />
+                        </div>
+                      ) : (
+                        <div className="aspect-video bg-gray-200 rounded flex items-center justify-center text-gray-400">
+                          No video
+                        </div>
+                      )}
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium mb-1">Video B</label>
+                      {editingExample.video_id_2 ? (
+                        <div className="aspect-video bg-black rounded overflow-hidden">
+                          <video
+                            src={videosApi.getStreamUrl(editingExample.video_id_2)}
+                            className="w-full h-full object-contain"
+                            controls
+                            muted
+                          />
+                        </div>
+                      ) : (
+                        <div className="aspect-video bg-gray-200 rounded flex items-center justify-center text-gray-400">
+                          No video
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Correct Answer */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Correct Answer</label>
+                    <select
+                      value={`${editingExample.correct_winner}:${editingExample.correct_degree}`}
+                      onChange={(e) => {
+                        const [winner, degree] = e.target.value.split(':').map(Number)
+                        setEditingExample({ ...editingExample, correct_winner: winner, correct_degree: degree })
+                      }}
+                      className="w-full p-2 border rounded-lg"
+                    >
+                      <option value="1:3">A Much More Lame (-3)</option>
+                      <option value="1:2">A More Lame (-2)</option>
+                      <option value="1:1">A Slightly More Lame (-1)</option>
+                      <option value="0:1">Equal / Cannot Decide (0)</option>
+                      <option value="2:1">B Slightly More Lame (+1)</option>
+                      <option value="2:2">B More Lame (+2)</option>
+                      <option value="2:3">B Much More Lame (+3)</option>
+                    </select>
+                  </div>
+
+                  {/* Difficulty */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Difficulty</label>
+                    <select
+                      value={editingExample.difficulty}
+                      onChange={(e) => setEditingExample({ ...editingExample, difficulty: e.target.value })}
+                      className="w-full p-2 border rounded-lg"
+                    >
+                      <option value="easy">Easy - Obvious difference</option>
+                      <option value="medium">Medium - Moderate difference</option>
+                      <option value="hard">Hard - Subtle difference</option>
+                    </select>
+                  </div>
+
+                  {/* Description */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Description</label>
+                    <textarea
+                      value={editingExample.description}
+                      onChange={(e) => setEditingExample({ ...editingExample, description: e.target.value })}
+                      className="w-full p-2 border rounded-lg"
+                      rows={2}
+                      placeholder="Describe what the rater should observe..."
+                    />
+                  </div>
+
+                  {/* Hint */}
+                  <div>
+                    <label className="block text-sm font-medium mb-1">Hint</label>
+                    <textarea
+                      value={editingExample.hint}
+                      onChange={(e) => setEditingExample({ ...editingExample, hint: e.target.value })}
+                      className="w-full p-2 border rounded-lg"
+                      rows={2}
+                      placeholder="Explain why this is the correct answer..."
+                    />
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 mt-6">
+                  <button
+                    onClick={() => {
+                      setShowEditExampleModal(false)
+                      setEditingExample(null)
+                    }}
+                    className="px-4 py-2 border rounded-lg hover:bg-accent"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleSaveExample}
+                    disabled={savingExample}
+                    className="px-4 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 disabled:opacity-50"
+                  >
+                    {savingExample ? 'Saving...' : 'Save Changes'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -619,21 +1795,6 @@ export default function TrainingModule() {
           </div>
         </div>
       )}
-
-      {/* Keyboard shortcuts */}
-      {view === 'training' && (
-        <script dangerouslySetInnerHTML={{
-          __html: `
-            document.addEventListener('keydown', function(e) {
-              if (e.target.tagName === 'INPUT') return;
-              if (e.key === 'h' || e.key === 'H') document.querySelector('[data-answer="0"]')?.click();
-              if (e.key === 'l' || e.key === 'L') document.querySelector('[data-answer="1"]')?.click();
-              if (e.key === '?') document.querySelector('[data-hint]')?.click();
-            });
-          `
-        }} />
-      )}
     </div>
   )
 }
-

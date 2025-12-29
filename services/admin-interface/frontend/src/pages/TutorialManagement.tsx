@@ -359,55 +359,154 @@ export default function TutorialManagement() {
                 </div>
               </div>
 
-              {/* Video Selection */}
+              {/* Video Selection - Drag & Drop */}
               <div className="grid grid-cols-2 gap-4">
+                {/* Video A Drop Zone */}
                 <div>
-                  <label className="block text-sm font-medium mb-1">Video A</label>
-                  <select
-                    value={formData.video_id_1}
-                    onChange={(e) => setFormData({ ...formData, video_id_1: e.target.value })}
-                    className="w-full p-2 border rounded-lg"
+                  <label className="block text-sm font-medium mb-2">
+                    Video A (Cow A)
+                    {formData.video_id_1 && (
+                      <button
+                        onClick={() => setFormData({ ...formData, video_id_1: '' })}
+                        className="ml-2 text-xs text-red-500 hover:text-red-700"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </label>
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-blue-500', 'bg-blue-50') }}
+                    onDragLeave={(e) => { e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50') }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.classList.remove('border-blue-500', 'bg-blue-50')
+                      const videoId = e.dataTransfer.getData('video_id')
+                      if (videoId && videoId !== formData.video_id_2) {
+                        setFormData({ ...formData, video_id_1: videoId })
+                      }
+                    }}
+                    className={`border-2 border-dashed rounded-lg overflow-hidden transition-all ${
+                      formData.video_id_1 ? 'border-blue-400 bg-blue-50' : 'border-gray-300'
+                    }`}
                   >
-                    <option value="">Select video...</option>
-                    {videos.map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                  {formData.video_id_1 && (
-                    <div className="mt-2 aspect-video bg-black rounded overflow-hidden">
-                      <video
-                        src={videosApi.getStreamUrl(formData.video_id_1)}
-                        className="w-full h-full object-contain"
-                        controls
-                        muted
-                      />
-                    </div>
-                  )}
+                    {formData.video_id_1 ? (
+                      <div className="relative">
+                        <video
+                          src={videosApi.getStreamUrl(formData.video_id_1)}
+                          className="w-full aspect-video object-cover"
+                          controls
+                          muted
+                        />
+                        <div className="absolute top-2 left-2 px-2 py-1 bg-blue-500 text-white text-xs font-bold rounded">
+                          A
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="aspect-video flex flex-col items-center justify-center text-gray-400">
+                        <span className="text-3xl mb-2">📥</span>
+                        <span className="text-sm">Drop Video A here</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
+
+                {/* Video B Drop Zone */}
                 <div>
-                  <label className="block text-sm font-medium mb-1">Video B</label>
-                  <select
-                    value={formData.video_id_2}
-                    onChange={(e) => setFormData({ ...formData, video_id_2: e.target.value })}
-                    className="w-full p-2 border rounded-lg"
+                  <label className="block text-sm font-medium mb-2">
+                    Video B (Cow B)
+                    {formData.video_id_2 && (
+                      <button
+                        onClick={() => setFormData({ ...formData, video_id_2: '' })}
+                        className="ml-2 text-xs text-red-500 hover:text-red-700"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </label>
+                  <div
+                    onDragOver={(e) => { e.preventDefault(); e.currentTarget.classList.add('border-green-500', 'bg-green-50') }}
+                    onDragLeave={(e) => { e.currentTarget.classList.remove('border-green-500', 'bg-green-50') }}
+                    onDrop={(e) => {
+                      e.preventDefault()
+                      e.currentTarget.classList.remove('border-green-500', 'bg-green-50')
+                      const videoId = e.dataTransfer.getData('video_id')
+                      if (videoId && videoId !== formData.video_id_1) {
+                        setFormData({ ...formData, video_id_2: videoId })
+                      }
+                    }}
+                    className={`border-2 border-dashed rounded-lg overflow-hidden transition-all ${
+                      formData.video_id_2 ? 'border-green-400 bg-green-50' : 'border-gray-300'
+                    }`}
                   >
-                    <option value="">Select video...</option>
-                    {videos.map((v) => (
-                      <option key={v.id} value={v.id}>{v.name}</option>
-                    ))}
-                  </select>
-                  {formData.video_id_2 && (
-                    <div className="mt-2 aspect-video bg-black rounded overflow-hidden">
-                      <video
-                        src={videosApi.getStreamUrl(formData.video_id_2)}
-                        className="w-full h-full object-contain"
-                        controls
-                        muted
-                      />
-                    </div>
-                  )}
+                    {formData.video_id_2 ? (
+                      <div className="relative">
+                        <video
+                          src={videosApi.getStreamUrl(formData.video_id_2)}
+                          className="w-full aspect-video object-cover"
+                          controls
+                          muted
+                        />
+                        <div className="absolute top-2 left-2 px-2 py-1 bg-green-500 text-white text-xs font-bold rounded">
+                          B
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="aspect-video flex flex-col items-center justify-center text-gray-400">
+                        <span className="text-3xl mb-2">📥</span>
+                        <span className="text-sm">Drop Video B here</span>
+                      </div>
+                    )}
+                  </div>
                 </div>
               </div>
+
+              {/* Available Videos - Draggable Grid */}
+              {videos.length > 0 && (
+                <div className="border-t pt-4">
+                  <h4 className="font-medium mb-2 text-sm">Available Videos ({videos.length}) - Drag to drop zones above</h4>
+                  <div className="grid grid-cols-5 gap-2 max-h-48 overflow-y-auto p-2 bg-gray-50 rounded-lg">
+                    {videos.map((video) => {
+                      const isSelectedA = formData.video_id_1 === video.id
+                      const isSelectedB = formData.video_id_2 === video.id
+                      return (
+                        <div
+                          key={video.id}
+                          draggable
+                          onDragStart={(e) => {
+                            e.dataTransfer.setData('video_id', video.id)
+                            e.dataTransfer.effectAllowed = 'copy'
+                          }}
+                          className={`relative border-2 rounded-lg overflow-hidden cursor-grab active:cursor-grabbing transition-all ${
+                            isSelectedA ? 'border-blue-500 ring-2 ring-blue-200' :
+                            isSelectedB ? 'border-green-500 ring-2 ring-green-200' :
+                            'border-gray-200 hover:border-gray-400 hover:shadow-md bg-white'
+                          }`}
+                        >
+                          <div className="relative">
+                            <video
+                              src={videosApi.getStreamUrl(video.id)}
+                              className="w-full aspect-video object-cover bg-gray-100"
+                              muted
+                              onMouseEnter={(e) => e.currentTarget.play()}
+                              onMouseLeave={(e) => { e.currentTarget.pause(); e.currentTarget.currentTime = 0 }}
+                            />
+                            {(isSelectedA || isSelectedB) && (
+                              <div className={`absolute top-1 right-1 px-1.5 py-0.5 rounded text-xs font-bold text-white ${
+                                isSelectedA ? 'bg-blue-500' : 'bg-green-500'
+                              }`}>
+                                {isSelectedA ? 'A' : 'B'}
+                              </div>
+                            )}
+                          </div>
+                          <div className="p-1 text-[10px] truncate bg-white border-t text-center">
+                            {(video.name || video.id).slice(0, 8)}...
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
 
               {/* Correct Answer */}
               <div>

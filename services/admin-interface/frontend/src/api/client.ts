@@ -212,6 +212,38 @@ export const trainingApi = {
     const response = await apiClient.get('/api/training/triplet/stats')
     return response.data
   },
+  // Learning module endpoints
+  getLearnProgress: async (userId?: string) => {
+    const response = await apiClient.get('/api/training/learn/progress', {
+      params: { user_id: userId }
+    })
+    return response.data
+  },
+  saveLearnProgress: async (progress: {
+    total_score: number
+    total_attempts: number
+    correct_count: number
+    current_level: number
+    streak: number
+    rater_tier?: string
+  }, userId?: string) => {
+    const response = await apiClient.put('/api/training/learn/progress', progress, {
+      params: { user_id: userId }
+    })
+    return response.data
+  },
+  getLeaderboard: async (limit = 20) => {
+    const response = await apiClient.get('/api/training/learn/leaderboard', {
+      params: { limit }
+    })
+    return response.data
+  },
+  getLearnExamples: async (difficulty?: string) => {
+    const response = await apiClient.get('/api/training/learn/examples', {
+      params: { difficulty }
+    })
+    return response.data
+  },
   // Rater reliability endpoints
   getRaterStats: async () => {
     const response = await apiClient.get('/api/training/raters')

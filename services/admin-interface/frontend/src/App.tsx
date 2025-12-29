@@ -6,7 +6,6 @@ import Dashboard from './pages/Dashboard'
 import VideoUpload from './pages/VideoUpload'
 import VideoAnalysis from './pages/VideoAnalysis'
 import TrainingQueue from './pages/TrainingQueue'
-import ModelConfig from './pages/ModelConfig'
 import PairwiseReview from './pages/PairwiseReview'
 import TripletComparison from './pages/TripletComparison'
 import HierarchyVisualization from './pages/HierarchyVisualization'
@@ -70,15 +69,7 @@ function App() {
                     }
                   />
                   <Route
-                    path="/models"
-                    element={
-                      <ResearcherRoute>
-                        <ModelConfig />
-                      </ResearcherRoute>
-                    }
-                  />
-                  <Route
-                    path="/ml-config"
+                    path="/config"
                     element={
                       <ResearcherRoute>
                         <MLConfiguration />

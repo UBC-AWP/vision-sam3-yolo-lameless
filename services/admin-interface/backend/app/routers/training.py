@@ -633,3 +633,182 @@ async def get_triplet_stats():
         "dissimilarity_tasks": dissimilarity_tasks,
         "completion_rate": triplets_completed / total_possible if total_possible > 0 else 0
     }
+
+
+# ==================== Training Progress & Leaderboard Endpoints ====================
+
+PROGRESS_DIR = TRAINING_DIR / "progress"
+
+
+class TrainingProgressRequest(BaseModel):
+    total_score: int
+    total_attempts: int
+    correct_count: int
+    current_level: int
+    streak: int
+    rater_tier: Optional[str] = None
+
+
+@router.get("/learn/progress")
+async def get_training_progress(user_id: Optional[str] = None):
+    """Get user's training progress"""
+    PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Use a default user_id if not provided (for anonymous users)
+    if not user_id:
+        user_id = "anonymous"
+
+    progress_file = PROGRESS_DIR / f"{user_id}.json"
+
+    if progress_file.exists():
+        with open(progress_file) as f:
+            return json.load(f)
+
+    # Return default progress
+    return {
+        "user_id": user_id,
+        "total_score": 0,
+        "total_attempts": 0,
+        "correct_count": 0,
+        "current_level": 1,
+        "streak": 0,
+        "rater_tier": "bronze",
+        "updated_at": None
+    }
+
+
+@router.put("/learn/progress")
+async def save_training_progress(progress: TrainingProgressRequest, user_id: Optional[str] = None):
+    """Save user's training progress"""
+    PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+
+    if not user_id:
+        user_id = "anonymous"
+
+    progress_data = {
+        "user_id": user_id,
+        "total_score": progress.total_score,
+        "total_attempts": progress.total_attempts,
+        "correct_count": progress.correct_count,
+        "current_level": progress.current_level,
+        "streak": progress.streak,
+        "rater_tier": progress.rater_tier,
+        "updated_at": datetime.utcnow().isoformat()
+    }
+
+    progress_file = PROGRESS_DIR / f"{user_id}.json"
+    with open(progress_file, "w") as f:
+        json.dump(progress_data, f, indent=2)
+
+    return {"status": "saved", **progress_data}
+
+
+@router.get("/learn/leaderboard")
+async def get_leaderboard(limit: int = 20):
+    """Get training leaderboard (top users by score)"""
+    PROGRESS_DIR.mkdir(parents=True, exist_ok=True)
+
+    leaderboard = []
+
+    for progress_file in PROGRESS_DIR.glob("*.json"):
+        try:
+            with open(progress_file) as f:
+                data = json.load(f)
+                leaderboard.append({
+                    "user_id": data.get("user_id", progress_file.stem),
+                    "username": data.get("username", data.get("user_id", progress_file.stem)),
+                    "total_score": data.get("total_score", 0),
+                    "accuracy": data.get("correct_count", 0) / max(data.get("total_attempts", 1), 1),
+                    "rater_tier": data.get("rater_tier", "bronze"),
+                    "current_level": data.get("current_level", 1)
+                })
+        except Exception as e:
+            print(f"Error reading progress file {progress_file}: {e}")
+
+    # Sort by score descending
+    leaderboard.sort(key=lambda x: x["total_score"], reverse=True)
+
+    # Assign ranks
+    for i, entry in enumerate(leaderboard):
+        entry["rank"] = i + 1
+
+    return {
+        "leaderboard": leaderboard[:limit],
+        "total_users": len(leaderboard)
+    }
+
+
+@router.get("/learn/examples")
+async def get_training_examples(difficulty: Optional[str] = None):
+    """Get training examples from tutorial/gold tasks"""
+    # Try to get examples from the tutorial system (gold_tasks table via tutorial router)
+    examples = {
+        "easy": [],
+        "medium": [],
+        "hard": []
+    }
+
+    # Read from gold_tasks directory
+    gold_tasks_dir = TRAINING_DIR / "gold_tasks"
+    gold_tasks_dir.mkdir(parents=True, exist_ok=True)
+
+    for task_file in gold_tasks_dir.glob("*.json"):
+        try:
+            with open(task_file) as f:
+                task = json.load(f)
+                if task.get("is_active", True):
+                    diff = task.get("difficulty", "medium")
+                    if diff not in examples:
+                        diff = "medium"
+
+                    examples[diff].append({
+                        "id": task.get("id", task_file.stem),
+                        "video_id_1": task.get("video_id_1"),
+                        "video_id_2": task.get("video_id_2"),
+                        "description": task.get("description", "Compare these two cows"),
+                        "hint": task.get("hint", "Look at the gait patterns"),
+                        "correct_winner": task.get("correct_winner", 0),
+                        "correct_degree": task.get("correct_degree", 1),
+                        "difficulty": diff
+                    })
+        except Exception as e:
+            print(f"Error reading task file {task_file}: {e}")
+
+    # If no tasks exist, create some default examples using available videos
+    if all(len(v) == 0 for v in examples.values()):
+        video_ids = []
+        for video_file in VIDEOS_DIR.glob("*.*"):
+            if video_file.is_file() and video_file.suffix.lower() in [".mp4", ".avi", ".mov", ".mkv"]:
+                video_id = video_file.stem.split("_")[0]
+                if video_id not in video_ids:
+                    video_ids.append(video_id)
+
+        # Create synthetic examples if we have videos
+        if len(video_ids) >= 2:
+            for i, diff in enumerate(["easy", "medium", "hard"]):
+                # Create 3 examples per difficulty
+                for j in range(min(3, len(video_ids) - 1)):
+                    idx1 = (i * 3 + j) % len(video_ids)
+                    idx2 = (idx1 + 1) % len(video_ids)
+                    examples[diff].append({
+                        "id": f"auto_{diff}_{j}",
+                        "video_id_1": video_ids[idx1],
+                        "video_id_2": video_ids[idx2],
+                        "description": f"Compare these two cows ({diff} difficulty)",
+                        "hint": "Watch their walking patterns carefully",
+                        "correct_winner": random.choice([0, 1, 2]),  # Random for auto-generated
+                        "correct_degree": random.choice([1, 2, 3]),
+                        "difficulty": diff,
+                        "is_auto_generated": True
+                    })
+
+    if difficulty and difficulty in examples:
+        return {
+            "examples": examples[difficulty],
+            "total": len(examples[difficulty])
+        }
+
+    return {
+        "examples": examples,
+        "total": sum(len(v) for v in examples.values())
+    }

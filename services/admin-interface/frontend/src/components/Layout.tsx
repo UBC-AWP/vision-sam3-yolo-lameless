@@ -23,7 +23,6 @@ import {
   Activity,
   Heart,
   ListTodo,
-  Sliders,
   Cpu,
   Users,
   BookOpen,
@@ -59,8 +58,7 @@ export default function Layout({ children }: LayoutProps) {
     { path: '/pipelines', label: 'Pipelines', icon: Activity, roles: ['admin', 'researcher'] },
     { path: '/health', label: 'Health', icon: Heart, roles: ['admin', 'researcher'] },
     { path: '/training', label: 'Queue', icon: ListTodo, roles: ['admin', 'researcher'] },
-    { path: '/models', label: 'Config', icon: Sliders, roles: ['admin', 'researcher'] },
-    { path: '/ml-config', label: 'ML Config', icon: Cpu, roles: ['admin', 'researcher'] },
+    { path: '/config', label: 'ML Config', icon: Cpu, roles: ['admin', 'researcher'] },
     { path: '/users', label: 'Users', icon: Users, roles: ['admin'] },
     { path: '/tutorials', label: 'Tutorials', icon: BookOpen, roles: ['admin'] },
   ]
