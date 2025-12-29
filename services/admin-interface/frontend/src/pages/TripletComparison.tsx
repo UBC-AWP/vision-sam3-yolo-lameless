@@ -33,6 +33,7 @@ export default function TripletComparison() {
   const loadNextTask = async () => {
     setLoading(true)
     setSelectedAnswer(null)
+    setIsPlaying(false)
     try {
       const data = await trainingApi.getNextTriplet()
       setTask(data)

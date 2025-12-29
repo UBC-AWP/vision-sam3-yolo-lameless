@@ -1,4 +1,4 @@
-import axios from 'axios'
+import axios, { InternalAxiosRequestConfig } from 'axios'
 
 const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:8000'
 
@@ -8,6 +8,18 @@ export const apiClient = axios.create({
     'Content-Type': 'application/json',
   },
 })
+
+// Add auth token to all requests
+apiClient.interceptors.request.use(
+  (config: InternalAxiosRequestConfig) => {
+    const token = localStorage.getItem('access_token')
+    if (token) {
+      config.headers.Authorization = `Bearer ${token}`
+    }
+    return config
+  },
+  (error: unknown) => Promise.reject(error)
+)
 
 // Video endpoints
 export const videosApi = {
@@ -394,6 +406,204 @@ export const eloRankingApi = {
   // Recalculate all ratings from scratch
   recalculateRatings: async () => {
     const response = await apiClient.post('/api/elo/recalculate')
+    return response.data
+  },
+}
+
+// User types
+export interface User {
+  id: string
+  email: string
+  username: string
+  role: 'admin' | 'researcher' | 'rater'
+  is_active: boolean
+  rater_tier?: 'gold' | 'silver' | 'bronze' | null
+  created_at: string
+  last_login?: string | null
+}
+
+export interface CreateUserData {
+  email: string
+  username: string
+  password: string
+  role: 'admin' | 'researcher' | 'rater'
+  rater_tier?: 'gold' | 'silver' | 'bronze'
+}
+
+// User Management endpoints (Admin only)
+export const usersApi = {
+  // List all users
+  list: async (skip = 0, limit = 100): Promise<User[]> => {
+    const response = await apiClient.get('/api/auth/users', { params: { skip, limit } })
+    return response.data
+  },
+
+  // Get a specific user
+  get: async (userId: string): Promise<User> => {
+    const response = await apiClient.get(`/api/auth/users/${userId}`)
+    return response.data
+  },
+
+  // Create a new user (admin only)
+  create: async (userData: CreateUserData): Promise<User> => {
+    const response = await apiClient.post('/api/auth/users', userData)
+    return response.data
+  },
+
+  // Update user role
+  updateRole: async (userId: string, role: string) => {
+    const response = await apiClient.put(`/api/auth/users/${userId}/role`, null, {
+      params: { role }
+    })
+    return response.data
+  },
+
+  // Update user tier (raters only)
+  updateTier: async (userId: string, tier: string) => {
+    const response = await apiClient.put(`/api/auth/users/${userId}/tier`, null, {
+      params: { tier }
+    })
+    return response.data
+  },
+
+  // Enable/disable user
+  updateStatus: async (userId: string, isActive: boolean) => {
+    const response = await apiClient.put(`/api/auth/users/${userId}/status`, null, {
+      params: { is_active: isActive }
+    })
+    return response.data
+  },
+
+  // Delete user
+  delete: async (userId: string) => {
+    const response = await apiClient.delete(`/api/auth/users/${userId}`)
+    return response.data
+  },
+}
+
+// Tutorial / Gold Task endpoints
+export interface TutorialExample {
+  id: string
+  video_id_1: string
+  video_id_2: string
+  description: string
+  hint: string
+  correct_answer: number  // -3 to 3 (7-point scale)
+  difficulty: string
+  order: number
+}
+
+export interface GoldTask {
+  id: string
+  video_id_1: string
+  video_id_2: string
+  correct_winner: number
+  correct_degree: number
+  difficulty: string
+  description?: string
+  hint?: string
+  is_tutorial: boolean
+  tutorial_order?: number
+  is_active: boolean
+  created_at: string
+}
+
+export interface CreateGoldTaskData {
+  video_id_1: string
+  video_id_2: string
+  correct_winner: number
+  correct_degree?: number
+  difficulty?: string
+  description?: string
+  hint?: string
+  is_tutorial?: boolean
+  tutorial_order?: number
+}
+
+export const tutorialApi = {
+  // Get tutorial examples for pairwise tutorial
+  getExamples: async (): Promise<{ examples: TutorialExample[]; total: number }> => {
+    const response = await apiClient.get('/api/tutorial/examples')
+    return response.data
+  },
+
+  // Auto-generate tutorial examples from random videos (admin only)
+  autoGenerate: async (count = 3) => {
+    const response = await apiClient.post('/api/tutorial/examples/auto-generate', null, {
+      params: { count }
+    })
+    return response.data
+  },
+
+  // List all gold tasks / tutorials
+  listTasks: async (params?: { is_tutorial?: boolean; is_active?: boolean }) => {
+    const response = await apiClient.get('/api/tutorial/tasks', { params })
+    return response.data
+  },
+
+  // Create a gold task / tutorial
+  createTask: async (taskData: CreateGoldTaskData): Promise<GoldTask> => {
+    const response = await apiClient.post('/api/tutorial/tasks', taskData)
+    return response.data
+  },
+
+  // Update a gold task / tutorial
+  updateTask: async (taskId: string, updates: Partial<GoldTask>) => {
+    const response = await apiClient.put(`/api/tutorial/tasks/${taskId}`, updates)
+    return response.data
+  },
+
+  // Delete a gold task / tutorial
+  deleteTask: async (taskId: string) => {
+    const response = await apiClient.delete(`/api/tutorial/tasks/${taskId}`)
+    return response.data
+  },
+
+  // Get tutorial stats
+  getStats: async () => {
+    const response = await apiClient.get('/api/tutorial/stats')
+    return response.data
+  },
+}
+
+// Auth endpoints
+export const authApi = {
+  login: async (email: string, password: string) => {
+    const response = await apiClient.post('/api/auth/login', { email, password })
+    return response.data
+  },
+
+  logout: async () => {
+    const response = await apiClient.post('/api/auth/logout')
+    return response.data
+  },
+
+  register: async (email: string, username: string, password: string) => {
+    const response = await apiClient.post('/api/auth/register', {
+      email,
+      username,
+      password,
+    })
+    return response.data
+  },
+
+  refresh: async (refreshToken: string) => {
+    const response = await apiClient.post('/api/auth/refresh', {
+      refresh_token: refreshToken
+    })
+    return response.data
+  },
+
+  me: async (): Promise<User> => {
+    const response = await apiClient.get('/api/auth/me')
+    return response.data
+  },
+
+  changePassword: async (currentPassword: string, newPassword: string) => {
+    const response = await apiClient.put('/api/auth/password', {
+      current_password: currentPassword,
+      new_password: newPassword,
+    })
     return response.data
   },
 }

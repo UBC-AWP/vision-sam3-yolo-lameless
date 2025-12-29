@@ -440,3 +440,196 @@ async def get_elo_ranking():
         "total_videos": len(ranking),
         "total_comparisons": len(all_comparisons)
     }
+
+
+# ==================== Triplet Comparison Endpoints ====================
+
+TRIPLET_DIR = TRAINING_DIR / "triplet"
+
+
+class TripletComparisonRequest(BaseModel):
+    reference_id: str
+    comparison_a_id: str
+    comparison_b_id: str
+    selected_answer: str  # 'A' or 'B'
+    confidence: str = "medium"  # high, medium, low
+    task_type: str = "similarity"  # similarity or dissimilarity
+
+
+@router.get("/triplet/next")
+async def get_next_triplet():
+    """Get the next triplet task to compare"""
+    TRIPLET_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Get all video IDs
+    video_ids = []
+    for video_file in VIDEOS_DIR.glob("*.*"):
+        if video_file.is_file() and video_file.suffix.lower() in [".mp4", ".avi", ".mov", ".mkv"]:
+            video_id = video_file.stem.split("_")[0]
+            if video_id not in video_ids:
+                video_ids.append(video_id)
+
+    if len(video_ids) < 3:
+        return {
+            "status": "insufficient_videos",
+            "message": "Need at least 3 videos for triplet comparison",
+            "pending_tasks": 0,
+            "total_tasks": 0
+        }
+
+    # Generate all possible triplets (reference, A, B)
+    # We use combinations to avoid duplicates
+    from itertools import permutations
+    all_triplets = []
+    for ref in video_ids:
+        others = [v for v in video_ids if v != ref]
+        for i, a in enumerate(others):
+            for b in others[i+1:]:
+                # Create canonical triplet key (sorted A,B to avoid duplicates)
+                triplet_key = f"{ref}_{min(a,b)}_{max(a,b)}"
+                all_triplets.append({
+                    "key": triplet_key,
+                    "reference": ref,
+                    "a": min(a, b),
+                    "b": max(a, b)
+                })
+
+    # Remove duplicate triplet keys
+    seen_keys = set()
+    unique_triplets = []
+    for t in all_triplets:
+        if t["key"] not in seen_keys:
+            seen_keys.add(t["key"])
+            unique_triplets.append(t)
+
+    # Get completed triplets
+    completed_triplets = set()
+    for triplet_file in TRIPLET_DIR.glob("*.json"):
+        triplet_key = triplet_file.stem
+        completed_triplets.add(triplet_key)
+
+    # Find pending triplets
+    pending_triplets = [t for t in unique_triplets if t["key"] not in completed_triplets]
+
+    if not pending_triplets:
+        return {
+            "status": "all_completed",
+            "pending_tasks": 0,
+            "total_tasks": len(unique_triplets)
+        }
+
+    # Select a random pending triplet
+    selected = random.choice(pending_triplets)
+
+    # Randomly decide task type (similarity or dissimilarity)
+    task_type = random.choice(["similarity", "dissimilarity"])
+
+    # Randomly swap A and B to avoid position bias
+    a, b = selected["a"], selected["b"]
+    if random.random() > 0.5:
+        a, b = b, a
+
+    return {
+        "reference_id": selected["reference"],
+        "comparison_a_id": a,
+        "comparison_b_id": b,
+        "task_type": task_type,
+        "pending_tasks": len(pending_triplets),
+        "total_tasks": len(unique_triplets)
+    }
+
+
+@router.post("/triplet")
+async def submit_triplet_comparison(comparison: TripletComparisonRequest):
+    """Submit a triplet comparison result"""
+    TRIPLET_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Create triplet key (canonical form)
+    a, b = comparison.comparison_a_id, comparison.comparison_b_id
+    triplet_key = f"{comparison.reference_id}_{min(a,b)}_{max(a,b)}"
+
+    comparison_data = {
+        "reference_id": comparison.reference_id,
+        "comparison_a_id": comparison.comparison_a_id,
+        "comparison_b_id": comparison.comparison_b_id,
+        "selected_answer": comparison.selected_answer,
+        "confidence": comparison.confidence,
+        "task_type": comparison.task_type,
+        "timestamp": datetime.utcnow().isoformat()
+    }
+
+    # Load existing comparisons for this triplet
+    triplet_file = TRIPLET_DIR / f"{triplet_key}.json"
+    comparisons = []
+    if triplet_file.exists():
+        with open(triplet_file) as f:
+            data = json.load(f)
+            comparisons = data.get("comparisons", [])
+
+    comparisons.append(comparison_data)
+
+    # Save updated comparisons
+    with open(triplet_file, "w") as f:
+        json.dump({
+            "triplet_key": triplet_key,
+            "reference_id": comparison.reference_id,
+            "comparison_a_id": min(a, b),
+            "comparison_b_id": max(a, b),
+            "comparisons": comparisons
+        }, f, indent=2)
+
+    return {
+        "status": "saved",
+        "triplet_key": triplet_key,
+        "total_comparisons": len(comparisons)
+    }
+
+
+@router.get("/triplet/stats")
+async def get_triplet_stats():
+    """Get triplet comparison statistics"""
+    TRIPLET_DIR.mkdir(parents=True, exist_ok=True)
+
+    total_comparisons = 0
+    triplets_completed = 0
+    similarity_tasks = 0
+    dissimilarity_tasks = 0
+
+    for triplet_file in TRIPLET_DIR.glob("*.json"):
+        with open(triplet_file) as f:
+            data = json.load(f)
+            comparisons = data.get("comparisons", [])
+            total_comparisons += len(comparisons)
+            triplets_completed += 1
+
+            for comp in comparisons:
+                if comp.get("task_type") == "similarity":
+                    similarity_tasks += 1
+                else:
+                    dissimilarity_tasks += 1
+
+    # Count total possible triplets
+    video_ids = []
+    for video_file in VIDEOS_DIR.glob("*.*"):
+        if video_file.is_file() and video_file.suffix.lower() in [".mp4", ".avi", ".mov", ".mkv"]:
+            video_id = video_file.stem.split("_")[0]
+            if video_id not in video_ids:
+                video_ids.append(video_id)
+
+    # Calculate total possible triplets
+    n = len(video_ids)
+    if n >= 3:
+        # For each reference, we can have C(n-1, 2) pairs
+        from math import comb
+        total_possible = n * comb(n - 1, 2)
+    else:
+        total_possible = 0
+
+    return {
+        "total_comparisons": total_comparisons,
+        "completed_tasks": triplets_completed,
+        "total_tasks": total_possible,
+        "similarity_tasks": similarity_tasks,
+        "dissimilarity_tasks": dissimilarity_tasks,
+        "completion_rate": triplets_completed / total_possible if total_possible > 0 else 0
+    }

@@ -437,3 +437,213 @@ async def update_user_status(
 
     status_text = "enabled" if is_active else "disabled"
     return {"message": f"User account {status_text}"}
+
+
+class AdminUserCreate(BaseModel):
+    """Admin user creation request - allows setting role"""
+    email: EmailStr
+    username: str = Field(..., min_length=3, max_length=100)
+    password: str = Field(..., min_length=8)
+    role: str = Field(default="rater", pattern="^(admin|researcher|rater)$")
+    rater_tier: Optional[str] = Field(default=None, pattern="^(gold|silver|bronze)$")
+
+
+@router.post("/users", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def create_user(
+    user_data: AdminUserCreate,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Create a new user with any role (admin only).
+    Allows admins to create admin, researcher, or rater accounts.
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
+    # Check if email already exists
+    result = await db.execute(
+        select(User).where(User.email == user_data.email)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Email already registered"
+        )
+
+    # Check if username already exists
+    result = await db.execute(
+        select(User).where(User.username == user_data.username)
+    )
+    if result.scalar_one_or_none():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username already taken"
+        )
+
+    # Set rater tier based on role
+    rater_tier = None
+    if user_data.role == "rater":
+        rater_tier = user_data.rater_tier or "bronze"
+
+    # Create user
+    user = User(
+        id=uuid.uuid4(),
+        email=user_data.email,
+        username=user_data.username,
+        password_hash=get_password_hash(user_data.password),
+        role=user_data.role,
+        is_active=True,
+        rater_tier=rater_tier,
+        created_at=datetime.utcnow()
+    )
+
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    return UserResponse(
+        id=str(user.id),
+        email=user.email,
+        username=user.username,
+        role=user.role,
+        is_active=user.is_active,
+        rater_tier=user.rater_tier,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )
+
+
+@router.put("/users/{user_id}/tier")
+async def update_user_tier(
+    user_id: str,
+    tier: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Update a rater's tier level (admin only).
+    Valid tiers: gold, silver, bronze
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
+    if tier not in ["gold", "silver", "bronze"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid tier. Must be gold, silver, or bronze"
+        )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    if user.role != "rater":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Only raters can have tiers"
+        )
+
+    user.rater_tier = tier
+    await db.commit()
+
+    return {"message": f"User tier updated to {tier}"}
+
+
+@router.delete("/users/{user_id}")
+async def delete_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Delete a user account (admin only).
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
+    # Prevent self-deletion
+    if str(current_user.id) == user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Cannot delete your own account"
+        )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    # Delete user's sessions first
+    sessions_result = await db.execute(
+        select(Session).where(Session.user_id == user.id)
+    )
+    sessions = sessions_result.scalars().all()
+    for session in sessions:
+        await db.delete(session)
+
+    # Delete user
+    await db.delete(user)
+    await db.commit()
+
+    return {"message": "User deleted successfully"}
+
+
+@router.get("/users/{user_id}", response_model=UserResponse)
+async def get_user(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Get a specific user's details (admin only).
+    """
+    if current_user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin access required"
+        )
+
+    result = await db.execute(
+        select(User).where(User.id == user_id)
+    )
+    user = result.scalar_one_or_none()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="User not found"
+        )
+
+    return UserResponse(
+        id=str(user.id),
+        email=user.email,
+        username=user.username,
+        role=user.role,
+        is_active=user.is_active,
+        rater_tier=user.rater_tier,
+        created_at=user.created_at,
+        last_login=user.last_login
+    )

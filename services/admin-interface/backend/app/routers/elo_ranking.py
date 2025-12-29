@@ -18,7 +18,7 @@ from pathlib import Path
 from itertools import combinations
 from collections import defaultdict
 
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, and_, or_
@@ -28,6 +28,7 @@ from app.database import (
     get_db, VideoEloRating, PairwiseComparison,
     EloHistory, HierarchySnapshot, User, RaterStats
 )
+from app.middleware.auth import get_current_user, get_optional_user
 
 router = APIRouter()
 
@@ -317,10 +318,12 @@ class InterRaterReliability:
 @router.post("/comparison")
 async def submit_comparison(
     submission: ComparisonSubmission,
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
 ):
     """
     Submit a pairwise comparison and update Elo ratings.
+    Tracks which user submitted the comparison for user-specific filtering.
     """
     # Convert raw_score (-3 to 3) to winner and degree
     if submission.raw_score is not None:
@@ -353,8 +356,14 @@ async def submit_comparison(
     rating_1 = await get_or_create_rating(submission.video_id_1)
     rating_2 = await get_or_create_rating(submission.video_id_2)
 
-    # Default rater weight (could be enhanced with actual user lookup)
+    # Get rater weight based on user tier
     rater_weight = 1.0
+    rater_id = None
+    if current_user:
+        rater_id = current_user.id
+        # Weight by rater tier
+        tier_weights = {"gold": 1.5, "silver": 1.0, "bronze": 0.75}
+        rater_weight = tier_weights.get(current_user.rater_tier, 1.0)
 
     # Update Elo ratings
     new_r1, new_r2, new_u1, new_u2 = EloCalculator.update_ratings(
@@ -387,13 +396,14 @@ async def submit_comparison(
     rating_2.elo_uncertainty = new_u2
     rating_2.total_comparisons += 1
 
-    # Save comparison record
+    # Save comparison record with rater_id
     comparison = PairwiseComparison(
         video_id_1=submission.video_id_1,
         video_id_2=submission.video_id_2,
         winner=submission.winner,
         degree=submission.degree,
         confidence=submission.confidence,
+        rater_id=rater_id,
         rater_weight=rater_weight
     )
     db.add(comparison)
@@ -489,11 +499,16 @@ async def get_hierarchy(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/next-pair")
-async def get_next_pair(db: AsyncSession = Depends(get_db)):
+async def get_next_pair(
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
     """
     Get the next video pair to compare using intelligent selection.
+    If user is logged in, only returns pairs they haven't rated yet.
+
     Prioritizes:
-    1. Pairs that haven't been compared yet
+    1. Pairs that the current user hasn't compared yet
     2. Pairs with high uncertainty
     3. Pairs with similar ratings (harder to distinguish)
     """
@@ -507,36 +522,47 @@ async def get_next_pair(db: AsyncSession = Depends(get_db)):
     if len(video_ids) < 2:
         raise HTTPException(status_code=400, detail="Need at least 2 videos")
 
-    # Get existing comparisons
-    result = await db.execute(select(PairwiseComparison))
-    comparisons = result.scalars().all()
+    # Get comparisons - filter by user if logged in
+    if current_user:
+        # Get pairs this user has already rated
+        result = await db.execute(
+            select(PairwiseComparison).where(PairwiseComparison.rater_id == current_user.id)
+        )
+        user_comparisons = result.scalars().all()
 
-    compared_pairs = set()
-    for comp in comparisons:
+        user_compared_pairs = set()
+        for comp in user_comparisons:
+            pair_key = tuple(sorted([comp.video_id_1, comp.video_id_2]))
+            user_compared_pairs.add(pair_key)
+    else:
+        user_compared_pairs = set()
+
+    # Get all comparisons for global stats
+    all_result = await db.execute(select(PairwiseComparison))
+    all_comparisons = all_result.scalars().all()
+
+    global_compared_pairs = set()
+    for comp in all_comparisons:
         pair_key = tuple(sorted([comp.video_id_1, comp.video_id_2]))
-        compared_pairs.add(pair_key)
+        global_compared_pairs.add(pair_key)
 
     # Generate all possible pairs
     all_pairs = list(combinations(sorted(video_ids), 2))
 
-    # Find uncompared pairs
-    uncompared = [p for p in all_pairs if p not in compared_pairs]
+    # Find pairs this user hasn't rated (or all uncompared if not logged in)
+    if current_user:
+        uncompared = [p for p in all_pairs if p not in user_compared_pairs]
+    else:
+        uncompared = [p for p in all_pairs if p not in global_compared_pairs]
 
     if not uncompared:
-        # All pairs compared - find pairs with fewest comparisons
-        pair_counts = defaultdict(int)
-        for comp in comparisons:
-            pair_key = tuple(sorted([comp.video_id_1, comp.video_id_2]))
-            pair_counts[pair_key] += 1
-
-        min_count = min(pair_counts.values()) if pair_counts else 0
-        uncompared = [p for p, c in pair_counts.items() if c == min_count]
-
-    if not uncompared:
+        # User has rated all pairs
         return {
             "status": "all_completed",
+            "message": "You have rated all available video pairs!" if current_user else "All pairs have been compared",
             "total_pairs": len(all_pairs),
-            "completed_pairs": len(compared_pairs)
+            "completed_pairs": len(user_compared_pairs) if current_user else len(global_compared_pairs),
+            "user_completed": len(user_compared_pairs) if current_user else None
         }
 
     # Get ratings for intelligent selection
@@ -579,13 +605,18 @@ async def get_next_pair(db: AsyncSession = Depends(get_db)):
         "video_id_2": v2,
         "pending_pairs": len(uncompared),
         "total_pairs": len(all_pairs),
-        "completed_pairs": len(compared_pairs)
+        "completed_pairs": len(user_compared_pairs) if current_user else len(global_compared_pairs),
+        "global_completed": len(global_compared_pairs),
+        "user_id": str(current_user.id) if current_user else None
     }
 
 
 @router.get("/stats")
-async def get_stats(db: AsyncSession = Depends(get_db)):
-    """Get comprehensive pairwise comparison statistics."""
+async def get_stats(
+    db: AsyncSession = Depends(get_db),
+    current_user: Optional[User] = Depends(get_optional_user)
+):
+    """Get comprehensive pairwise comparison statistics, including user-specific stats if logged in."""
     # Count comparisons
     comp_count = await db.execute(select(func.count(PairwiseComparison.id)))
     total_comparisons = comp_count.scalar() or 0
@@ -626,6 +657,39 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
     )
     winner_counts = dict(winner_dist.fetchall())
 
+    # User-specific stats if logged in
+    user_stats = None
+    if current_user:
+        # Count user's comparisons
+        user_comp_count = await db.execute(
+            select(func.count(PairwiseComparison.id)).where(
+                PairwiseComparison.rater_id == current_user.id
+            )
+        )
+        user_total = user_comp_count.scalar() or 0
+
+        # Count user's unique pairs
+        user_comparisons_result = await db.execute(
+            select(PairwiseComparison).where(
+                PairwiseComparison.rater_id == current_user.id
+            )
+        )
+        user_comparisons = user_comparisons_result.scalars().all()
+        user_unique_pairs = set()
+        for comp in user_comparisons:
+            pair_key = tuple(sorted([comp.video_id_1, comp.video_id_2]))
+            user_unique_pairs.add(pair_key)
+
+        user_stats = {
+            "user_id": str(current_user.id),
+            "username": current_user.username,
+            "tier": current_user.rater_tier,
+            "total_comparisons": user_total,
+            "unique_pairs_compared": len(user_unique_pairs),
+            "completion_rate": len(user_unique_pairs) / total_possible_pairs if total_possible_pairs > 0 else 0,
+            "pending_pairs": total_possible_pairs - len(user_unique_pairs)
+        }
+
     return {
         "total_comparisons": total_comparisons,
         "unique_pairs_compared": unique_pairs,
@@ -637,7 +701,8 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
             "video_2_wins": winner_counts.get(2, 0),
             "ties": winner_counts.get(0, 0)
         },
-        "comparisons_per_pair": total_comparisons / unique_pairs if unique_pairs > 0 else 0
+        "comparisons_per_pair": total_comparisons / unique_pairs if unique_pairs > 0 else 0,
+        "user_stats": user_stats
     }
 
 

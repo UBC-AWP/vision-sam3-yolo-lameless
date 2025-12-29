@@ -95,21 +95,27 @@ class ProcessingJob(Base):
 
 
 class GoldTask(Base):
-    """Gold task model for rater validation"""
+    """Gold task model for rater validation and tutorial"""
     __tablename__ = "gold_tasks"
 
     id = Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     video_id_1 = Column(String(100), nullable=False)
     video_id_2 = Column(String(100), nullable=False)
-    correct_winner = Column(Integer, nullable=False)  # 1 or 2
+    correct_winner = Column(Integer, nullable=False)  # 0=tie, 1=video1, 2=video2
+    correct_degree = Column(Integer, default=2)  # 1-3 strength of correct answer
     difficulty = Column(String(10), default="medium")  # easy, medium, hard
+    description = Column(Text, nullable=True)  # What to look for
+    hint = Column(Text, nullable=True)  # Explanation of correct answer
+    is_tutorial = Column(Boolean, default=False)  # If true, shown in tutorial mode
+    tutorial_order = Column(Integer, nullable=True)  # Order in tutorial sequence
     created_by = Column(UUID(as_uuid=True), ForeignKey("users.id"), nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     __table_args__ = (
-        CheckConstraint("correct_winner IN (1, 2)", name="valid_winner"),
+        CheckConstraint("correct_winner IN (0, 1, 2)", name="valid_winner"),
         CheckConstraint("difficulty IN ('easy', 'medium', 'hard')", name="valid_difficulty"),
+        CheckConstraint("correct_degree >= 1 AND correct_degree <= 3", name="valid_degree"),
     )
 
 

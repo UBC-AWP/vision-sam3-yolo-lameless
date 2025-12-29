@@ -17,6 +17,8 @@ import PipelineMonitor from './pages/PipelineMonitor'
 import SystemHealth from './pages/SystemHealth'
 import VideoResults from './pages/VideoResults'
 import MLConfiguration from './pages/MLConfiguration'
+import UserManagement from './pages/UserManagement'
+import TutorialManagement from './pages/TutorialManagement'
 
 function App() {
   return (
@@ -99,6 +101,24 @@ function App() {
                       <ResearcherRoute>
                         <SystemHealth />
                       </ResearcherRoute>
+                    }
+                  />
+
+                  {/* Admin only routes */}
+                  <Route
+                    path="/users"
+                    element={
+                      <AdminRoute>
+                        <UserManagement />
+                      </AdminRoute>
+                    }
+                  />
+                  <Route
+                    path="/tutorials"
+                    element={
+                      <AdminRoute>
+                        <TutorialManagement />
+                      </AdminRoute>
                     }
                   />
                 </Routes>

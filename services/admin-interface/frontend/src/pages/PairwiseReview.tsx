@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { videosApi, eloRankingApi } from '@/api/client'
+import { videosApi, eloRankingApi, tutorialApi, TutorialExample } from '@/api/client'
 
 interface VideoPair {
   video_id_1: string
@@ -22,28 +22,6 @@ const COMPARISON_SCALE = [
   { value: 3, label: 'B Much More Lame', color: 'bg-orange-700' },
 ]
 
-// Tutorial examples with known answers
-const TUTORIAL_EXAMPLES = [
-  {
-    id: 'tutorial_1',
-    description: 'Watch for arched back - a clear sign of lameness',
-    correctAnswer: 2,
-    hint: 'The cow in Video B has a noticeably arched back while walking.',
-  },
-  {
-    id: 'tutorial_2', 
-    description: 'Observe head bobbing patterns',
-    correctAnswer: -1,
-    hint: 'Video A shows slight head bobbing, indicating mild lameness.',
-  },
-  {
-    id: 'tutorial_3',
-    description: 'Look for uneven stride length',
-    correctAnswer: 0,
-    hint: 'Both cows appear to walk similarly - this is a difficult comparison.',
-  },
-]
-
 export default function PairwiseReview() {
   const navigate = useNavigate()
   const [pair, setPair] = useState<VideoPair | null>(null)
@@ -53,12 +31,14 @@ export default function PairwiseReview() {
   const [submitting, setSubmitting] = useState(false)
   const [selectedValue, setSelectedValue] = useState<number | null>(null)
   const [showRanking, setShowRanking] = useState(false)
-  
+
   // Tutorial state
   const [inTutorial, setInTutorial] = useState(true)
   const [tutorialStep, setTutorialStep] = useState(0)
   const [showTutorialFeedback, setShowTutorialFeedback] = useState(false)
   const [tutorialScore, setTutorialScore] = useState(0)
+  const [tutorialExamples, setTutorialExamples] = useState<TutorialExample[]>([])
+  const [tutorialLoading, setTutorialLoading] = useState(true)
   
   // Share functionality
   const [showShareModal, setShowShareModal] = useState(false)
@@ -73,14 +53,41 @@ export default function PairwiseReview() {
     const tutorialComplete = localStorage.getItem('pairwise_tutorial_complete')
     if (tutorialComplete === 'true') {
       setInTutorial(false)
+      setTutorialLoading(false)
       loadNextPair()
+    } else {
+      // Load tutorial examples from API
+      loadTutorialExamples()
     }
     loadStats()
   }, [])
 
+  const loadTutorialExamples = async () => {
+    setTutorialLoading(true)
+    try {
+      const data = await tutorialApi.getExamples()
+      if (data.examples && data.examples.length > 0) {
+        setTutorialExamples(data.examples)
+      } else {
+        // No tutorials configured, skip to real comparisons
+        console.log('No tutorial examples found, skipping tutorial')
+        setInTutorial(false)
+        loadNextPair()
+      }
+    } catch (error) {
+      console.error('Failed to load tutorial examples:', error)
+      // On error, skip tutorial and go to real comparisons
+      setInTutorial(false)
+      loadNextPair()
+    } finally {
+      setTutorialLoading(false)
+    }
+  }
+
   const loadNextPair = async () => {
     setLoading(true)
     setSelectedValue(null)
+    setIsPlaying(false)
     try {
       // Use Elo API for intelligent pair selection
       const data = await eloRankingApi.getNextPair()
@@ -107,21 +114,23 @@ export default function PairwiseReview() {
   }
 
   const handleTutorialAnswer = () => {
-    const currentExample = TUTORIAL_EXAMPLES[tutorialStep]
-    const isCorrect = selectedValue === currentExample.correctAnswer
-    
+    const currentExample = tutorialExamples[tutorialStep]
+    if (!currentExample) return
+
+    const isCorrect = selectedValue === currentExample.correct_answer
+
     if (isCorrect) {
       setTutorialScore(prev => prev + 1)
     }
-    
+
     setShowTutorialFeedback(true)
   }
 
   const handleTutorialNext = () => {
     setShowTutorialFeedback(false)
     setSelectedValue(null)
-    
-    if (tutorialStep < TUTORIAL_EXAMPLES.length - 1) {
+
+    if (tutorialStep < tutorialExamples.length - 1) {
       setTutorialStep(prev => prev + 1)
     } else {
       // Tutorial complete
@@ -262,8 +271,25 @@ export default function PairwiseReview() {
 
   // Tutorial UI
   if (inTutorial) {
-    const currentExample = TUTORIAL_EXAMPLES[tutorialStep]
-    
+    // Show loading state while fetching tutorial examples
+    if (tutorialLoading) {
+      return (
+        <div className="flex items-center justify-center h-64">
+          <div className="text-center">
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
+            <div className="text-muted-foreground">Loading tutorial...</div>
+          </div>
+        </div>
+      )
+    }
+
+    // If no tutorial examples, this shouldn't render (handled in useEffect)
+    if (tutorialExamples.length === 0) {
+      return null
+    }
+
+    const currentExample = tutorialExamples[tutorialStep]
+
     return (
       <div className="space-y-6 max-w-4xl mx-auto">
         <div className="bg-blue-50 border border-blue-200 rounded-lg p-6">
@@ -271,13 +297,13 @@ export default function PairwiseReview() {
             Tutorial: Learn to Assess Lameness
           </h2>
           <p className="text-blue-700">
-            Step {tutorialStep + 1} of {TUTORIAL_EXAMPLES.length}
+            Step {tutorialStep + 1} of {tutorialExamples.length}
           </p>
           <div className="mt-4">
             <div className="w-full bg-blue-200 rounded-full h-2">
               <div
                 className="bg-blue-600 h-2 rounded-full transition-all"
-                style={{ width: `${((tutorialStep + 1) / TUTORIAL_EXAMPLES.length) * 100}%` }}
+                style={{ width: `${((tutorialStep + 1) / tutorialExamples.length) * 100}%` }}
               />
             </div>
           </div>
@@ -285,14 +311,34 @@ export default function PairwiseReview() {
 
         <div className="border rounded-lg p-6 bg-white">
           <h3 className="text-lg font-semibold mb-2">{currentExample.description}</h3>
-          
-          {/* Tutorial videos would go here - using placeholders */}
+
+          {/* Tutorial videos - actual videos from API */}
           <div className="grid grid-cols-2 gap-4 my-6">
-            <div className="aspect-video bg-gray-200 rounded-lg flex items-center justify-center">
-              <span className="text-gray-500">Tutorial Video A</span>
+            <div className="space-y-2">
+              <div className="text-center font-medium text-gray-700">Video A</div>
+              <div className="aspect-video bg-black rounded-lg overflow-hidden">
+                <video
+                  src={videosApi.getStreamUrl(currentExample.video_id_1)}
+                  className="w-full h-full object-contain"
+                  controls
+                  loop
+                  muted
+                  autoPlay
+                />
+              </div>
             </div>
-            <div className="aspect-video bg-gray-200 rounded-lg flex items-center justify-center">
-              <span className="text-gray-500">Tutorial Video B</span>
+            <div className="space-y-2">
+              <div className="text-center font-medium text-gray-700">Video B</div>
+              <div className="aspect-video bg-black rounded-lg overflow-hidden">
+                <video
+                  src={videosApi.getStreamUrl(currentExample.video_id_2)}
+                  className="w-full h-full object-contain"
+                  controls
+                  loop
+                  muted
+                  autoPlay
+                />
+              </div>
             </div>
           </div>
 
@@ -320,14 +366,14 @@ export default function PairwiseReview() {
 
           {showTutorialFeedback && (
             <div className={`mt-6 p-4 rounded-lg ${
-              selectedValue === currentExample.correctAnswer
+              selectedValue === currentExample.correct_answer
                 ? 'bg-green-100 border border-green-300'
                 : 'bg-yellow-100 border border-yellow-300'
             }`}>
               <h4 className={`font-semibold ${
-                selectedValue === currentExample.correctAnswer ? 'text-green-800' : 'text-yellow-800'
+                selectedValue === currentExample.correct_answer ? 'text-green-800' : 'text-yellow-800'
               }`}>
-                {selectedValue === currentExample.correctAnswer ? '✓ Correct!' : '○ Not quite right'}
+                {selectedValue === currentExample.correct_answer ? '✓ Correct!' : '○ Not quite right'}
               </h4>
               <p className="text-sm mt-1">{currentExample.hint}</p>
             </div>
@@ -347,14 +393,24 @@ export default function PairwiseReview() {
                 onClick={handleTutorialNext}
                 className="px-6 py-3 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700"
               >
-                {tutorialStep < TUTORIAL_EXAMPLES.length - 1 ? 'Next Example' : 'Start Real Comparisons'}
+                {tutorialStep < tutorialExamples.length - 1 ? 'Next Example' : 'Start Real Comparisons'}
               </button>
             )}
           </div>
         </div>
 
-        <div className="text-center text-sm text-gray-500">
-          Score: {tutorialScore}/{tutorialStep + (showTutorialFeedback ? 1 : 0)}
+        <div className="flex justify-between items-center text-sm text-gray-500">
+          <div>Score: {tutorialScore}/{tutorialStep + (showTutorialFeedback ? 1 : 0)}</div>
+          <button
+            onClick={() => {
+              localStorage.setItem('pairwise_tutorial_complete', 'true')
+              setInTutorial(false)
+              loadNextPair()
+            }}
+            className="text-blue-600 hover:text-blue-800 underline"
+          >
+            Skip Tutorial
+          </button>
         </div>
       </div>
     )
