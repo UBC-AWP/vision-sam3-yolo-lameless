@@ -165,6 +165,8 @@ Upload → preprocess/curate → (YOLO, SAM3, DINOv3, T‑LEAP) → {ML, TCN, Tr
 - Docker and Docker Compose
 - Conda/Mamba (for local development)
 
+> 📖 **New to the project?** See the complete [INSTALLATION.md](INSTALLATION.md) guide for fresh computer setup.
+
 ## Quick Start
 
 ### Option 1: Fresh Deployment (Recommended)
