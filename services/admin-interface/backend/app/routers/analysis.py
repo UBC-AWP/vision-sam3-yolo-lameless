@@ -98,6 +98,20 @@ async def get_all_pipeline_results(video_id: str):
                 "data": json.load(f)
             }
 
+    # Check for LLM explanation
+    explanation_file = RESULTS_DIR / "explanations" / f"{video_id}_explanation.json"
+    if explanation_file.exists():
+        with open(explanation_file) as f:
+            results["pipelines"]["explanation"] = {
+                "status": "success",
+                "data": json.load(f)
+            }
+    else:
+        results["pipelines"]["explanation"] = {
+            "status": "not_available",
+            "data": None
+        }
+
     return results
 
 
@@ -253,13 +267,78 @@ async def get_batch_analysis(video_ids: List[str], pipelines: Optional[List[str]
     }
 
 
+@router.get("/{video_id}/explanation")
+async def get_llm_explanation(video_id: str):
+    """Get LLM-generated explanation for a video analysis"""
+    explanation_file = RESULTS_DIR / "explanations" / f"{video_id}_explanation.json"
+    
+    if not explanation_file.exists():
+        # Try to generate a basic explanation from fusion results
+        fusion_file = RESULTS_DIR / "fusion" / f"{video_id}_fusion.json"
+        if not fusion_file.exists():
+            raise HTTPException(status_code=404, detail="No analysis results found for this video")
+        
+        # Return a placeholder indicating LLM explanation not yet generated
+        with open(fusion_file) as f:
+            fusion_data = json.load(f)
+        
+        fusion_result = fusion_data.get("fusion_result", {})
+        probability = fusion_result.get("final_probability", 0.5)
+        prediction = "Lame" if probability > 0.5 else "Sound"
+        confidence = fusion_result.get("confidence", 0.5)
+        
+        return {
+            "video_id": video_id,
+            "status": "pending",
+            "message": "LLM explanation not yet generated. Showing basic summary.",
+            "explanation": f"The AI system predicts this cow is **{prediction}** with {confidence:.0%} confidence.",
+            "sections": {
+                "executive_summary": f"Prediction: {prediction} ({probability:.1%} probability)",
+                "key_evidence": "See pipeline contributions in the analysis results.",
+                "uncertainties": "Full LLM analysis pending.",
+                "recommended_action": "Monitor cow and request full analysis if needed."
+            },
+            "llm_provider": "none",
+            "fusion_summary": {
+                "prediction": prediction,
+                "probability": probability,
+                "confidence": confidence,
+                "decision_mode": fusion_result.get("decision_mode", "unknown")
+            }
+        }
+    
+    with open(explanation_file) as f:
+        return json.load(f)
+
+
+@router.post("/{video_id}/explanation/generate")
+async def request_explanation_generation(video_id: str):
+    """Request LLM explanation generation for a video (triggers via NATS)"""
+    fusion_file = RESULTS_DIR / "fusion" / f"{video_id}_fusion.json"
+    
+    if not fusion_file.exists():
+        raise HTTPException(status_code=404, detail="No fusion results found. Run analysis first.")
+    
+    # In a real implementation, this would publish to NATS to trigger LLM service
+    # For now, return status indicating the request was received
+    return {
+        "video_id": video_id,
+        "status": "requested",
+        "message": "Explanation generation requested. Check back shortly."
+    }
+
+
 @router.get("/{video_id}/{pipeline}")
 async def get_pipeline_result(video_id: str, pipeline: str):
     """Get individual pipeline result for a video"""
-    valid_pipelines = ["yolo", "sam3", "dinov3", "tleap", "tcn", "transformer", "gnn", "graph_transformer", "ml", "fusion", "shap"]
+    valid_pipelines = ["yolo", "sam3", "dinov3", "tleap", "tcn", "transformer", "gnn", "graph_transformer", "ml", "fusion", "shap", "explanation"]
 
     if pipeline not in valid_pipelines:
         raise HTTPException(status_code=400, detail=f"Invalid pipeline. Must be one of: {valid_pipelines}")
+
+    # Handle explanation specially
+    if pipeline == "explanation":
+        return await get_llm_explanation(video_id)
 
     result_file = RESULTS_DIR / pipeline / f"{video_id}_{pipeline}.json"
 

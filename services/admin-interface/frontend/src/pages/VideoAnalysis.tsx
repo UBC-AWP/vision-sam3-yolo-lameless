@@ -3,6 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { videosApi, analysisApi, trainingApi } from '@/api/client'
 import VideoPlayer from '@/components/VideoPlayer'
 import ShapExplanation from '@/components/ShapExplanation'
+import LLMExplanation from '@/components/LLMExplanation'
 
 interface DetectionFrame {
   frame: number
@@ -276,6 +277,9 @@ export default function VideoAnalysis() {
           <div className="border border-border rounded-lg p-6 bg-card">
             <ShapExplanation videoId={videoId!} />
           </div>
+
+          {/* LLM AI Explanation */}
+          <LLMExplanation videoId={videoId!} />
 
           {/* Labeling Controls */}
           <div className="border border-border rounded-lg p-6 bg-card">
