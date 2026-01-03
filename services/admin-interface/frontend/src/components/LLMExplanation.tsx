@@ -48,6 +48,25 @@ interface LLMExplanationProps {
   className?: string
 }
 
+// Simple markdown to HTML converter for LLM output
+function renderMarkdown(text: string): string {
+  if (!text) return ''
+  
+  return text
+    // Bold: **text** or __text__
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/__([^_]+)__/g, '<strong>$1</strong>')
+    // Italic: *text* or _text_
+    .replace(/\*([^*]+)\*/g, '<em>$1</em>')
+    .replace(/_([^_]+)_/g, '<em>$1</em>')
+    // Bullet points: - item
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    // Wrap consecutive li elements in ul
+    .replace(/(<li>.*<\/li>\n?)+/g, '<ul class="list-disc list-inside space-y-1">$&</ul>')
+    // Line breaks
+    .replace(/\n/g, '<br/>')
+}
+
 export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
   const [data, setData] = useState<LLMExplanationData | null>(null)
   const [loading, setLoading] = useState(true)
@@ -167,9 +186,12 @@ export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
             <CheckCircle2 className="h-4 w-4 text-primary" />
             Executive Summary
           </div>
-          <p className="text-sm text-foreground bg-muted/50 rounded-lg p-3">
-            {data.sections?.executive_summary || data.explanation}
-          </p>
+          <div 
+            className="text-sm text-foreground bg-muted/50 rounded-lg p-3 [&_strong]:font-semibold [&_strong]:text-foreground [&_em]:italic"
+            dangerouslySetInnerHTML={{ 
+              __html: renderMarkdown(data.sections?.executive_summary || data.explanation) 
+            }}
+          />
         </div>
 
         {/* Key Evidence */}
@@ -179,9 +201,12 @@ export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
               <ClipboardList className="h-4 w-4 text-info" />
               Key Evidence
             </div>
-            <div className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-3 whitespace-pre-line">
-              {data.sections.key_evidence}
-            </div>
+            <div 
+              className="text-sm text-muted-foreground bg-muted/30 rounded-lg p-3 [&_strong]:font-semibold [&_strong]:text-foreground [&_ul]:mt-1 [&_li]:text-muted-foreground"
+              dangerouslySetInnerHTML={{ 
+                __html: renderMarkdown(data.sections.key_evidence) 
+              }}
+            />
           </div>
         )}
 
@@ -192,9 +217,12 @@ export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
               <HelpCircle className="h-4 w-4 text-warning" />
               Uncertainties
             </div>
-            <div className="text-sm text-muted-foreground bg-warning/10 border border-warning/20 rounded-lg p-3 whitespace-pre-line">
-              {data.sections.uncertainties}
-            </div>
+            <div 
+              className="text-sm text-muted-foreground bg-warning/10 border border-warning/20 rounded-lg p-3 [&_strong]:font-semibold [&_strong]:text-warning [&_ul]:mt-1 [&_li]:text-muted-foreground"
+              dangerouslySetInnerHTML={{ 
+                __html: renderMarkdown(data.sections.uncertainties) 
+              }}
+            />
           </div>
         )}
 
@@ -213,7 +241,12 @@ export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
             )}>
               <div className="flex items-start gap-2">
                 <ArrowRight className="h-4 w-4 mt-0.5 flex-shrink-0" />
-                <span>{data.sections.recommended_action}</span>
+                <span 
+                  className="[&_strong]:font-semibold"
+                  dangerouslySetInnerHTML={{ 
+                    __html: renderMarkdown(data.sections.recommended_action) 
+                  }}
+                />
               </div>
             </div>
           </div>

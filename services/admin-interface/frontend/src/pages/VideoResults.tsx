@@ -21,8 +21,11 @@ import {
   Loader2,
   BarChart3,
   Users,
-  Microscope
+  Microscope,
+  Sparkles
 } from 'lucide-react'
+import ShapExplanation from '@/components/ShapExplanation'
+import LLMExplanation from '@/components/LLMExplanation'
 
 const API_BASE = '/api'
 
@@ -715,6 +718,30 @@ export default function VideoResults() {
           </div>
         </div>
       )}
+
+      {/* AI Explanations Section */}
+      <div className="grid lg:grid-cols-2 gap-6">
+        {/* LLM Explanation */}
+        <LLMExplanation videoId={videoId!} />
+        
+        {/* SHAP Explanation */}
+        <div className="border border-border rounded-xl bg-card overflow-hidden">
+          <div className="p-4 border-b border-border bg-muted/30">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-purple-500/20 flex items-center justify-center">
+                <Sparkles className="h-5 w-5 text-purple-500" />
+              </div>
+              <div>
+                <h3 className="font-semibold text-foreground">Feature Importance</h3>
+                <p className="text-sm text-muted-foreground">SHAP-based explanation</p>
+              </div>
+            </div>
+          </div>
+          <div className="p-4">
+            <ShapExplanation videoId={videoId!} />
+          </div>
+        </div>
+      </div>
 
       {/* Pipeline Results */}
       <div className="space-y-4">

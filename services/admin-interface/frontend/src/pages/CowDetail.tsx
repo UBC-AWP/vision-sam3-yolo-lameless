@@ -6,6 +6,7 @@ import {
   LamenessTimelineEntry, 
   CowVideo 
 } from '@/api/client'
+import LLMExplanation from '@/components/LLMExplanation'
 
 interface CowDetails {
   id: string
@@ -328,6 +329,19 @@ export default function CowDetail() {
           </span>
         </div>
       </div>
+
+      {/* Latest AI Explanation */}
+      {videos.length > 0 && (
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            🤖 Latest AI Analysis
+            <span className="text-sm font-normal text-muted-foreground">
+              from most recent video
+            </span>
+          </h3>
+          <LLMExplanation videoId={videos[0].video_id} />
+        </div>
+      )}
 
       {/* Tabs */}
       <div className="border-b">

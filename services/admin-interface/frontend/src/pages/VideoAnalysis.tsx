@@ -2,8 +2,6 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { videosApi, analysisApi, trainingApi } from '@/api/client'
 import VideoPlayer from '@/components/VideoPlayer'
-import ShapExplanation from '@/components/ShapExplanation'
-import LLMExplanation from '@/components/LLMExplanation'
 
 interface DetectionFrame {
   frame: number
@@ -261,7 +259,7 @@ export default function VideoAnalysis() {
             {analysis?.pipeline_contributions && (
               <div className="space-y-2">
                 <h4 className="text-sm font-medium">Pipeline Scores</h4>
-                {Object.entries(analysis.pipeline_contributions).map(([pipeline, value]) => (
+                {Object.entries(analysis.pipeline_contributions).slice(0, 4).map(([pipeline, value]) => (
                   <div key={pipeline} className="flex justify-between text-sm">
                     <span className="capitalize">{pipeline.replace('_', ' ')}</span>
                     <span className="text-muted-foreground">
@@ -269,17 +267,24 @@ export default function VideoAnalysis() {
                     </span>
                   </div>
                 ))}
+                {Object.keys(analysis.pipeline_contributions).length > 4 && (
+                  <div className="text-xs text-muted-foreground">
+                    +{Object.keys(analysis.pipeline_contributions).length - 4} more pipelines
+                  </div>
+                )}
               </div>
             )}
-          </div>
 
-          {/* SHAP Explanation */}
-          <div className="border border-border rounded-lg p-6 bg-card">
-            <ShapExplanation videoId={videoId!} />
+            {/* Link to detailed analysis */}
+            <div className="pt-4 border-t border-border">
+              <button
+                onClick={() => navigate(`/results/${videoId}`)}
+                className="w-full px-4 py-2 text-sm font-medium bg-info/10 text-info hover:bg-info/20 rounded-lg transition-colors"
+              >
+                View Full Analysis & AI Explanation →
+              </button>
+            </div>
           </div>
-
-          {/* LLM AI Explanation */}
-          <LLMExplanation videoId={videoId!} />
 
           {/* Labeling Controls */}
           <div className="border border-border rounded-lg p-6 bg-card">
