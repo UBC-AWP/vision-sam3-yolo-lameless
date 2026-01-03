@@ -44,8 +44,8 @@ export function useWebSocket(
     onConnect,
     onDisconnect,
     onError,
-    reconnectAttempts = 5,
-    reconnectInterval = 3000,
+    reconnectAttempts = 3,
+    reconnectInterval = 5000,
     autoConnect = true
   } = options
 
@@ -56,6 +56,22 @@ export function useWebSocket(
   const reconnectCountRef = useRef(0)
   const reconnectTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const isConnectingRef = useRef(false)
+  const isMountedRef = useRef(true)
+
+  // Store callbacks in refs to avoid useEffect re-runs
+  const onMessageRef = useRef(onMessage)
+  const onConnectRef = useRef(onConnect)
+  const onDisconnectRef = useRef(onDisconnect)
+  const onErrorRef = useRef(onError)
+
+  // Update refs when callbacks change
+  useEffect(() => {
+    onMessageRef.current = onMessage
+    onConnectRef.current = onConnect
+    onDisconnectRef.current = onDisconnect
+    onErrorRef.current = onError
+  }, [onMessage, onConnect, onDisconnect, onError])
 
   const clearTimers = useCallback(() => {
     if (reconnectTimeoutRef.current) {
@@ -70,18 +86,24 @@ export function useWebSocket(
 
   const disconnect = useCallback(() => {
     clearTimers()
+    isConnectingRef.current = false
     if (wsRef.current) {
+      wsRef.current.onclose = null // Prevent reconnection on intentional close
       wsRef.current.close()
       wsRef.current = null
     }
-    setStatus('disconnected')
+    if (isMountedRef.current) {
+      setStatus('disconnected')
+    }
   }, [clearTimers])
 
   const connect = useCallback(() => {
-    if (wsRef.current?.readyState === WebSocket.OPEN) {
+    // Prevent multiple simultaneous connection attempts
+    if (isConnectingRef.current || wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) {
       return
     }
 
+    isConnectingRef.current = true
     clearTimers()
     setStatus('connecting')
 
@@ -90,16 +112,19 @@ export function useWebSocket(
       wsRef.current = new WebSocket(wsUrl)
 
       wsRef.current.onopen = () => {
-        setStatus('connected')
-        reconnectCountRef.current = 0
-        onConnect?.()
+        isConnectingRef.current = false
+        if (isMountedRef.current) {
+          setStatus('connected')
+          reconnectCountRef.current = 0
+          onConnectRef.current?.()
 
-        // Set up ping interval
-        pingIntervalRef.current = setInterval(() => {
-          if (wsRef.current?.readyState === WebSocket.OPEN) {
-            wsRef.current.send('ping')
-          }
-        }, 25000)
+          // Set up ping interval
+          pingIntervalRef.current = setInterval(() => {
+            if (wsRef.current?.readyState === WebSocket.OPEN) {
+              wsRef.current.send('ping')
+            }
+          }, 25000)
+        }
       }
 
       wsRef.current.onmessage = (event) => {
@@ -117,36 +142,49 @@ export function useWebSocket(
             return
           }
 
-          setLastMessage(message)
-          onMessage?.(message)
-        } catch (error) {
-          console.error('Failed to parse WebSocket message:', error)
+          if (isMountedRef.current) {
+            setLastMessage(message)
+            onMessageRef.current?.(message)
+          }
+        } catch {
+          // Silently ignore parse errors for non-JSON messages
         }
       }
 
       wsRef.current.onclose = () => {
-        setStatus('disconnected')
-        onDisconnect?.()
+        isConnectingRef.current = false
+        if (isMountedRef.current) {
+          setStatus('disconnected')
+          onDisconnectRef.current?.()
+        }
         clearTimers()
 
-        // Attempt reconnection
-        if (reconnectCountRef.current < reconnectAttempts) {
+        // Attempt reconnection with exponential backoff
+        if (isMountedRef.current && reconnectCountRef.current < reconnectAttempts) {
           reconnectCountRef.current += 1
+          const backoff = reconnectInterval * Math.pow(2, reconnectCountRef.current - 1)
           reconnectTimeoutRef.current = setTimeout(() => {
-            connect()
-          }, reconnectInterval)
+            if (isMountedRef.current) {
+              connect()
+            }
+          }, Math.min(backoff, 30000)) // Cap at 30 seconds
         }
       }
 
-      wsRef.current.onerror = (error) => {
-        setStatus('error')
-        onError?.(error)
+      wsRef.current.onerror = () => {
+        isConnectingRef.current = false
+        if (isMountedRef.current) {
+          setStatus('error')
+          onErrorRef.current?.(new Event('error'))
+        }
       }
-    } catch (error) {
-      console.error('WebSocket connection error:', error)
-      setStatus('error')
+    } catch {
+      isConnectingRef.current = false
+      if (isMountedRef.current) {
+        setStatus('error')
+      }
     }
-  }, [channel, onConnect, onDisconnect, onError, onMessage, reconnectAttempts, reconnectInterval, clearTimers])
+  }, [channel, reconnectAttempts, reconnectInterval, clearTimers])
 
   const send = useCallback((message: object) => {
     if (wsRef.current?.readyState === WebSocket.OPEN) {
@@ -154,16 +192,31 @@ export function useWebSocket(
     }
   }, [])
 
-  // Auto-connect on mount
+  // Auto-connect on mount - only depends on channel and autoConnect
   useEffect(() => {
+    isMountedRef.current = true
+    
     if (autoConnect) {
-      connect()
+      // Small delay to prevent rapid reconnection on hot reload
+      const timeoutId = setTimeout(() => {
+        if (isMountedRef.current) {
+          connect()
+        }
+      }, 100)
+      
+      return () => {
+        clearTimeout(timeoutId)
+        isMountedRef.current = false
+        disconnect()
+      }
     }
 
     return () => {
+      isMountedRef.current = false
       disconnect()
     }
-  }, [autoConnect, connect, disconnect])
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channel, autoConnect])
 
   return {
     status,

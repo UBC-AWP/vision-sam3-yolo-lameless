@@ -6,7 +6,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useState, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '../contexts/AuthContext'
-import { useTheme } from '../contexts/ThemeContext'
+import { useTheme, ThemeMode } from '../contexts/ThemeContext'
 import {
   User,
   LogOut,
@@ -53,7 +53,7 @@ export default function Layout({ children }: LayoutProps) {
   const { user, isAuthenticated, isLoading, logout, hasRole } = useAuth()
   const { theme, setTheme, themes, resolvedTheme } = useTheme()
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
-  const [isThemeMenuOpen, setIsThemeMenuOpen] = useState(false)
+  // Theme dropdown removed - now using direct cycle
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(() => {
     const saved = localStorage.getItem('sidebar_collapsed')
@@ -84,7 +84,6 @@ export default function Layout({ children }: LayoutProps) {
       if (e.key === 'Escape') {
         setIsSearchOpen(false)
         setIsUserMenuOpen(false)
-        setIsThemeMenuOpen(false)
       }
     }
 
@@ -413,59 +412,20 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Right side actions */}
           <div className="flex items-center gap-2">
-            {/* Theme toggle */}
-            <div className="relative">
-              <button
-                onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
-                className="p-2.5 rounded-xl hover:bg-accent/50 transition-colors"
-                title="Change theme"
-              >
-                {getThemeIcon()}
-              </button>
-
-              {isThemeMenuOpen && (
-                <>
-                  {/* Backdrop */}
-                  <div
-                    className="fixed inset-0 z-[100]"
-                    onClick={() => setIsThemeMenuOpen(false)}
-                  />
-                  {/* Dropdown menu */}
-                  <div className="absolute right-0 top-full mt-2 w-52 bg-card rounded-xl shadow-2xl border border-border z-[101] animate-scale-in overflow-hidden">
-                    <div className="p-2">
-                      <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                        Choose Theme
-                      </p>
-                      {themes.map((t) => (
-                        <button
-                          key={t.value}
-                          onClick={() => {
-                            setTheme(t.value)
-                            setIsThemeMenuOpen(false)
-                          }}
-                          className={cn(
-                            "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm",
-                            theme === t.value 
-                              ? "bg-primary text-primary-foreground shadow-sm" 
-                              : "hover:bg-accent"
-                          )}
-                        >
-                          <span className="text-base">{t.icon}</span>
-                          <span className="font-medium">{t.label}</span>
-                          {theme === t.value && (
-                            <div className="ml-auto">
-                              <svg className="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                              </svg>
-                            </div>
-                          )}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
+            {/* Theme toggle - cycles through themes on click */}
+            <button
+              onClick={() => {
+                // Cycle to next theme
+                const themeOrder: ThemeMode[] = ['light', 'dark', 'midnight', 'ocean', 'forest', 'sunset']
+                const currentIndex = themeOrder.indexOf(theme === 'system' ? 'dark' : theme)
+                const nextIndex = (currentIndex + 1) % themeOrder.length
+                setTheme(themeOrder[nextIndex])
+              }}
+              className="p-2.5 rounded-xl hover:bg-accent/50 transition-colors"
+              title={`Current: ${themes.find(t => t.value === theme)?.label || 'System'} - Click to change`}
+            >
+              {getThemeIcon()}
+            </button>
 
             {/* Notifications */}
             <button className="p-2.5 rounded-xl hover:bg-accent/50 transition-colors relative">

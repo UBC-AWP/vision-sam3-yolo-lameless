@@ -624,49 +624,49 @@ export default function TrainingModule() {
   return (
     <div className="max-w-5xl mx-auto space-y-6">
       {/* Header with progress */}
-      <div className="bg-gradient-to-r from-blue-600 to-purple-600 rounded-xl p-6 text-white">
+      <div className="bg-card border border-border rounded-xl p-6">
         <div className="flex justify-between items-start">
           <div>
-            <h1 className="text-3xl font-bold">Lameness Training</h1>
-            <p className="text-blue-100 mt-1">Learn to assess cow lameness like an expert</p>
+            <h1 className="text-3xl font-bold text-foreground">Lameness Training</h1>
+            <p className="text-muted-foreground mt-1">Learn to assess cow lameness like an expert</p>
           </div>
           <div className="text-right">
-            <div className={`inline-flex items-center gap-2 ${tier.bgColor} ${tier.color} px-3 py-1 rounded-full`}>
+            <div className={`inline-flex items-center gap-2 bg-primary/10 text-primary px-3 py-1 rounded-full border border-primary/20`}>
               <span className="text-xl">{tier.icon}</span>
               <span className="font-bold">{tier.tier} Rater</span>
             </div>
-            {saving && <div className="text-xs text-blue-200 mt-1">Saving...</div>}
+            {saving && <div className="text-xs text-muted-foreground mt-1">Saving...</div>}
           </div>
         </div>
 
         <div className="grid grid-cols-4 gap-4 mt-6">
-          <div className="bg-white/20 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold">{totalScore}</div>
-            <div className="text-sm text-blue-100">Total Points</div>
+          <div className="bg-muted/50 border border-border rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-foreground">{totalScore}</div>
+            <div className="text-sm text-muted-foreground">Total Points</div>
           </div>
-          <div className="bg-white/20 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold">{streak} 🔥</div>
-            <div className="text-sm text-blue-100">Streak</div>
+          <div className="bg-muted/50 border border-border rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-foreground">{streak} 🔥</div>
+            <div className="text-sm text-muted-foreground">Streak</div>
           </div>
-          <div className="bg-white/20 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold">{(accuracy * 100).toFixed(0)}%</div>
-            <div className="text-sm text-blue-100">Accuracy</div>
+          <div className="bg-muted/50 border border-border rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-foreground">{(accuracy * 100).toFixed(0)}%</div>
+            <div className="text-sm text-muted-foreground">Accuracy</div>
           </div>
-          <div className="bg-white/20 rounded-lg p-3 text-center">
-            <div className="text-2xl font-bold">Lv.{currentLevel.level}</div>
-            <div className="text-sm text-blue-100">{currentLevel.name}</div>
+          <div className="bg-muted/50 border border-border rounded-lg p-3 text-center">
+            <div className="text-2xl font-bold text-foreground">Lv.{currentLevel.level}</div>
+            <div className="text-sm text-muted-foreground">{currentLevel.name}</div>
           </div>
         </div>
 
         {/* Level progress bar */}
         <div className="mt-4">
-          <div className="flex justify-between text-sm text-blue-100 mb-1">
+          <div className="flex justify-between text-sm text-muted-foreground mb-1">
             <span>Level {currentLevel.level}</span>
             <span>Level {Math.min(currentLevel.level + 1, 5)}</span>
           </div>
-          <div className="h-2 bg-white/30 rounded-full">
+          <div className="h-2 bg-muted rounded-full">
             <div
-              className="h-2 bg-yellow-400 rounded-full transition-all"
+              className="h-2 bg-primary rounded-full transition-all"
               style={{ width: `${getProgressToNextLevel()}%` }}
             />
           </div>
