@@ -289,7 +289,7 @@
 
   .premium-card::before {
     content: '';
-    @apply absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300;
+    @apply absolute inset-0 rounded-xl opacity-0 transition-opacity duration-300 pointer-events-none;
     background: radial-gradient(
       600px circle at var(--mouse-x, 50%) var(--mouse-y, 50%),
       hsl(var(--primary) / 0.1),
@@ -323,7 +323,7 @@
 
   .gradient-border::before {
     content: '';
-    @apply absolute inset-0 rounded-xl p-[1px];
+    @apply absolute inset-0 rounded-xl p-[1px] pointer-events-none;
     background: linear-gradient(
       135deg,
       hsl(var(--gradient-start)),
@@ -393,7 +393,7 @@
 
   .btn-premium::before {
     content: '';
-    @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent;
+    @apply absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent pointer-events-none;
     transform: translateX(-100%);
     transition: transform 0.5s ease;
   }

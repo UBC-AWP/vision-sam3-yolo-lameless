@@ -310,11 +310,11 @@ export default function Layout({ children }: LayoutProps) {
             {isUserMenuOpen && (
               <>
                 <div
-                  className="fixed inset-0 z-40"
+                  className="fixed inset-0 z-[60]"
                   onClick={() => setIsUserMenuOpen(false)}
                 />
                 <div className={cn(
-                  "absolute z-50 bg-card rounded-xl shadow-xl border border-border/50 animate-scale-in overflow-hidden",
+                  "absolute z-[61] bg-card rounded-xl shadow-xl border border-border/50 animate-scale-in overflow-hidden",
                   isSidebarCollapsed 
                     ? "left-full ml-2 bottom-0 w-72" 
                     : "left-0 right-0 bottom-full mb-2"
@@ -416,10 +416,7 @@ export default function Layout({ children }: LayoutProps) {
             {/* Theme toggle */}
             <div className="relative">
               <button
-                onClick={(e) => {
-                  e.stopPropagation()
-                  setIsThemeMenuOpen(!isThemeMenuOpen)
-                }}
+                onClick={() => setIsThemeMenuOpen(!isThemeMenuOpen)}
                 className="p-2.5 rounded-xl hover:bg-accent/50 transition-colors"
                 title="Change theme"
               >
@@ -427,17 +424,14 @@ export default function Layout({ children }: LayoutProps) {
               </button>
 
               {isThemeMenuOpen && (
-                <div className="relative">
+                <>
                   {/* Backdrop */}
                   <div
                     className="fixed inset-0 z-[100]"
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      setIsThemeMenuOpen(false)
-                    }}
+                    onClick={() => setIsThemeMenuOpen(false)}
                   />
                   {/* Dropdown menu */}
-                  <div className="absolute right-0 top-2 w-52 bg-card rounded-xl shadow-2xl border border-border z-[101] animate-scale-in overflow-hidden">
+                  <div className="absolute right-0 top-full mt-2 w-52 bg-card rounded-xl shadow-2xl border border-border z-[101] animate-scale-in overflow-hidden">
                     <div className="p-2">
                       <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
                         Choose Theme
@@ -445,8 +439,7 @@ export default function Layout({ children }: LayoutProps) {
                       {themes.map((t) => (
                         <button
                           key={t.value}
-                          onClick={(e) => {
-                            e.stopPropagation()
+                          onClick={() => {
                             setTheme(t.value)
                             setIsThemeMenuOpen(false)
                           }}
@@ -470,7 +463,7 @@ export default function Layout({ children }: LayoutProps) {
                       ))}
                     </div>
                   </div>
-                </div>
+                </>
               )}
             </div>
 
