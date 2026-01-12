@@ -172,7 +172,7 @@ resource "aws_autoscaling_group" "gpu_worker" {
     instances_distribution {
       on_demand_base_capacity                  = var.use_spot_instances ? 0 : 1
       on_demand_percentage_above_base_capacity = var.use_spot_instances ? 0 : 100
-      spot_allocation_strategy                 = "capacity-optimized"
+      spot_allocation_strategy                 = "lowest-price"
       on_demand_allocation_strategy            = "lowest-price"
     }
 
@@ -188,11 +188,11 @@ resource "aws_autoscaling_group" "gpu_worker" {
 
       # Fallback instance types - multiple options for better availability
       override {
-        instance_type = "g4dn.2xlarge"
+        instance_type = "g4dn.xlarge"
       }
 
       override {
-        instance_type = "g5.xlarge"
+        instance_type = "g4dn.2xlarge"
       }
 
       override {
