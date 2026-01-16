@@ -164,8 +164,11 @@ Upload → preprocess/curate → (YOLO, SAM3, DINOv3, T‑LEAP) → {ML, TCN, Tr
 
 - Docker and Docker Compose
 - Conda/Mamba (for local development)
+- **For GPU Support**: NVIDIA GPU, NVIDIA Docker runtime, and CUDA 12.1+
 
 > 📖 **New to the project?** See the complete [docs/INSTALLATION.md](docs/INSTALLATION.md) guide for fresh computer setup.
+>
+> 🚀 **GPU Deployment?** See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for building and deploying GPU-enabled images.
 
 ## Quick Start
 
@@ -194,12 +197,33 @@ This script:
 ### Option 2: Manual Docker Compose
 
 ```bash
-# Start all services
+# Start all services (CPU mode)
 docker compose up -d
+
+# OR start with GPU support (requires NVIDIA Docker runtime)
+docker compose -f docker-compose.gpu.yml up -d
 
 # Initialize database (first time or after schema changes)
 docker compose exec postgres psql -U lameness_user -d lameness_db < scripts/init_db.sql
 ```
+
+### Option 3: GPU-Only Services
+
+For production GPU deployment on AWS:
+
+```bash
+# Build GPU images
+./scripts/build-gpu-images.sh
+
+# Build and push to ECR
+export ECR_REGISTRY=your-ecr-registry
+./scripts/build-gpu-images.sh --push --tag=latest
+
+# Enable GPU worker on AWS
+./scripts/gpu-worker.sh start
+```
+
+See [docs/GPU_SETUP.md](docs/GPU_SETUP.md) for complete GPU setup instructions.
 
 ### Access Points
 

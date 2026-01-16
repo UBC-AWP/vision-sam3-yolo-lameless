@@ -1,0 +1,69 @@
+# GPU-enabled YOLO Pipeline Dockerfile
+# Base image with CUDA 12.1 and cuDNN 8
+FROM nvidia/cuda:12.1.0-cudnn8-devel-ubuntu22.04
+
+# Prevent interactive prompts during build
+ENV DEBIAN_FRONTEND=noninteractive
+
+WORKDIR /app
+
+# Install system dependencies
+RUN apt-get update && apt-get install -y \
+    wget \
+    git \
+    libgl1-mesa-glx \
+    libglib2.0-0 \
+    libsm6 \
+    libxext6 \
+    libxrender-dev \
+    libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Install Miniconda
+RUN wget --quiet https://repo.anaconda.com/miniconda/Miniconda3-latest-Linux-x86_64.sh -O ~/miniconda.sh && \
+    /bin/bash ~/miniconda.sh -b -p /opt/conda && \
+    rm ~/miniconda.sh && \
+    /opt/conda/bin/conda clean -afy
+
+ENV PATH=/opt/conda/bin:$PATH
+
+# Install mamba for faster package resolution
+RUN conda install -y mamba -n base -c conda-forge
+
+# Copy environment file
+COPY services/yolo-pipeline/environment.yml /app/environment.yml
+
+# Create conda environment with GPU-enabled PyTorch
+RUN mamba create -n yolo-pipeline python=3.10 -y && \
+    mamba install -n yolo-pipeline -c conda-forge opencv -y && \
+    /opt/conda/envs/yolo-pipeline/bin/pip install --no-cache-dir \
+    torch==2.1.0 \
+    torchvision==0.16.0 \
+    --index-url https://download.pytorch.org/whl/cu121 && \
+    /opt/conda/envs/yolo-pipeline/bin/pip install --no-cache-dir \
+    ultralytics>=8.0.0 \
+    nats-py>=2.6.0 \
+    pyyaml>=6.0.1 \
+    numpy>=1.24.0 \
+    pandas>=2.0.0 \
+    opencv-python>=4.8.0 && \
+    mamba clean -afy
+
+# Make RUN commands use the new environment
+SHELL ["/opt/conda/bin/conda", "run", "-n", "yolo-pipeline", "/bin/bash", "-c"]
+
+# Copy application code
+COPY services/yolo-pipeline/ /app/
+COPY shared/ /app/shared/
+
+# Set environment variables
+ENV PATH=/opt/conda/envs/yolo-pipeline/bin:$PATH
+ENV PYTHONPATH=/app:$PYTHONPATH
+ENV NVIDIA_VISIBLE_DEVICES=all
+ENV NVIDIA_DRIVER_CAPABILITIES=compute,utility
+
+# Verify CUDA installation
+RUN python -c "import torch; print(f'PyTorch version: {torch.__version__}'); print(f'CUDA available: {torch.cuda.is_available()}'); print(f'CUDA version: {torch.version.cuda}')"
+
+# Run the application
+CMD ["conda", "run", "-n", "yolo-pipeline", "python", "app/main.py"]

@@ -1,0 +1,159 @@
+name: Build and Push GPU Images
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Image tag (default: latest)'
+        required: false
+        default: 'latest'
+      service:
+        description: 'Specific service to build (leave empty for all)'
+        required: false
+        default: ''
+  push:
+    branches:
+      - main
+    paths:
+      - 'services/*/Dockerfile.gpu'
+      - 'services/*/environment.yml'
+      - '.github/workflows/build-gpu-images.yml'
+
+env:
+  AWS_REGION: us-east-1
+
+jobs:
+  build-gpu-images:
+    name: Build GPU Images
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service:
+          - name: yolo-pipeline
+            path: services/yolo-pipeline
+          - name: sam3-pipeline
+            path: services/sam3-pipeline
+          - name: dinov3-pipeline
+            path: services/dinov3-pipeline
+          - name: tleap-pipeline
+            path: services/tleap-pipeline
+          - name: tcn-pipeline
+            path: services/tcn-pipeline
+          - name: transformer-pipeline
+            path: services/transformer-pipeline
+          - name: gnn-pipeline
+            path: services/gnn-pipeline
+          - name: graph-transformer-pipeline
+            path: services/graph-transformer-pipeline
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check if service should be built
+        id: check-service
+        run: |
+          SERVICE_INPUT="${{ github.event.inputs.service }}"
+          CURRENT_SERVICE="${{ matrix.service.name }}"
+
+          if [ -z "$SERVICE_INPUT" ] || [ "$SERVICE_INPUT" == "$CURRENT_SERVICE" ]; then
+            echo "should_build=true" >> $GITHUB_OUTPUT
+            echo "Building $CURRENT_SERVICE"
+          else
+            echo "should_build=false" >> $GITHUB_OUTPUT
+            echo "Skipping $CURRENT_SERVICE"
+          fi
+
+      - name: Configure AWS credentials
+        if: steps.check-service.outputs.should_build == 'true'
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        if: steps.check-service.outputs.should_build == 'true'
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Set up Docker Buildx
+        if: steps.check-service.outputs.should_build == 'true'
+        uses: docker/setup-buildx-action@v3
+
+      - name: Extract metadata
+        if: steps.check-service.outputs.should_build == 'true'
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ steps.login-ecr.outputs.registry }}/${{ matrix.service.name }}-gpu
+          tags: |
+            type=raw,value=${{ github.event.inputs.tag || 'latest' }}
+            type=sha,prefix=
+            type=ref,event=branch
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+
+      - name: Check if GPU Dockerfile exists
+        if: steps.check-service.outputs.should_build == 'true'
+        id: check-dockerfile
+        run: |
+          if [ -f "${{ matrix.service.path }}/Dockerfile.gpu" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "::warning::GPU Dockerfile not found for ${{ matrix.service.name }}"
+          fi
+
+      - name: Build and push GPU image
+        if: steps.check-service.outputs.should_build == 'true' && steps.check-dockerfile.outputs.exists == 'true'
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.path }}/Dockerfile.gpu
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            BUILDKIT_INLINE_CACHE=1
+
+      - name: Image details
+        if: steps.check-service.outputs.should_build == 'true' && steps.check-dockerfile.outputs.exists == 'true'
+        run: |
+          echo "## ${{ matrix.service.name }} GPU Image Built" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Registry:** ${{ steps.login-ecr.outputs.registry }}" >> $GITHUB_STEP_SUMMARY
+          echo "**Image:** ${{ matrix.service.name }}-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "**Tags:**" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+          echo "${{ steps.meta.outputs.tags }}" >> $GITHUB_STEP_SUMMARY
+          echo '```' >> $GITHUB_STEP_SUMMARY
+
+  notify-completion:
+    name: Notify Build Completion
+    runs-on: ubuntu-latest
+    needs: build-gpu-images
+    if: always()
+    steps:
+      - name: Build Summary
+        run: |
+          echo "## GPU Image Build Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ needs.build-gpu-images.result }}" == "success" ]; then
+            echo "✅ All GPU images built and pushed successfully!" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "⚠️ Some GPU image builds failed. Check the logs above." >> $GITHUB_STEP_SUMMARY
+          fi
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**GPU Services:**" >> $GITHUB_STEP_SUMMARY
+          echo "- yolo-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- sam3-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- dinov3-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- tleap-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- tcn-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- transformer-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- gnn-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
+          echo "- graph-transformer-pipeline-gpu" >> $GITHUB_STEP_SUMMARY
