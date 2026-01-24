@@ -237,7 +237,7 @@ END $$;
 -- Default Admin User
 -- Email: admin@example.com
 -- Password: adminpass123
-INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier)
+INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier, created_at)
 VALUES (
     'a0000000-0000-0000-0000-000000000001'::uuid,
     'admin@example.com',
@@ -245,13 +245,14 @@ VALUES (
     '$2b$12$RvENahyeLjwOc0WBIounA.A.yRVDG.iDXhFty7nHNnErhg8oXA1j.',
     'admin',
     TRUE,
-    'gold'
-) ON CONFLICT (email) DO NOTHING;
+    'gold',
+    CURRENT_TIMESTAMP
+) ON CONFLICT (email) DO UPDATE SET created_at = COALESCE(users.created_at, CURRENT_TIMESTAMP);
 
 -- Sample Researcher User
 -- Email: researcher@example.com  
 -- Password: researcher123
-INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier)
+INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier, created_at)
 VALUES (
     'a0000000-0000-0000-0000-000000000002'::uuid,
     'researcher@example.com',
@@ -259,13 +260,14 @@ VALUES (
     '$2b$12$y3RWpoi7LSF1/10ST335g.gaUC72y5qaxH7RCqh3giN51bTLT/hSm',
     'researcher',
     TRUE,
-    'gold'
-) ON CONFLICT (email) DO NOTHING;
+    'gold',
+    CURRENT_TIMESTAMP
+) ON CONFLICT (email) DO UPDATE SET created_at = COALESCE(users.created_at, CURRENT_TIMESTAMP);
 
 -- Sample Rater User
 -- Email: rater@example.com
 -- Password: rater123
-INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier)
+INSERT INTO users (id, email, username, password_hash, role, is_active, rater_tier, created_at)
 VALUES (
     'a0000000-0000-0000-0000-000000000003'::uuid,
     'rater@example.com',
@@ -273,8 +275,9 @@ VALUES (
     '$2b$12$8efPMdT57Vw8Zawqya9qG.z5KepzE7PIfIwrG19s7cWPxHJwtk1v.',
     'rater',
     TRUE,
-    'bronze'
-) ON CONFLICT (email) DO NOTHING;
+    'bronze',
+    CURRENT_TIMESTAMP
+) ON CONFLICT (email) DO UPDATE SET created_at = COALESCE(users.created_at, CURRENT_TIMESTAMP);
 
 -- Initialize rater stats for seed users
 INSERT INTO rater_stats (id, user_id, total_comparisons, gold_task_accuracy, agreement_rate, weight, tier)
