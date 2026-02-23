@@ -1,0 +1,88 @@
+name: GPU Toggle
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: 'Enable or disable GPU worker'
+        required: true
+        type: choice
+        options:
+          - enable
+          - disable
+
+env:
+  AWS_REGION: us-west-2
+
+jobs:
+  toggle-gpu:
+    name: Toggle GPU Worker
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.6"
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: terraform init
+
+      - name: Set GPU state
+        id: set-gpu
+        run: |
+          if [ "${{ github.event.inputs.action }}" == "enable" ]; then
+            echo "gpu_enabled=true" >> $GITHUB_OUTPUT
+            echo "GPU worker will be ENABLED"
+            echo ""
+            echo "Cost information:"
+            echo "  - g4dn.xlarge On-Demand: ~\$0.526/hour"
+            echo "  - g4dn.xlarge Spot: ~\$0.16/hour"
+          else
+            echo "gpu_enabled=false" >> $GITHUB_OUTPUT
+            echo "GPU worker will be DISABLED"
+            echo "No GPU costs will be incurred."
+          fi
+
+      - name: Apply Terraform
+        working-directory: terraform
+        run: |
+          terraform apply \
+            -var="gpu_enabled=${{ steps.set-gpu.outputs.gpu_enabled }}" \
+            -var="db_password=${{ secrets.DB_PASSWORD }}" \
+            -var="jwt_secret=${{ secrets.JWT_SECRET }}" \
+            -var="ecr_registry=${{ secrets.ECR_REGISTRY }}" \
+            -auto-approve
+
+      - name: Check ASG Status
+        run: |
+          echo "Checking GPU worker Auto Scaling Group status..."
+          aws autoscaling describe-auto-scaling-groups \
+            --auto-scaling-group-names cow-lameness-production-gpu-worker-asg \
+            --query 'AutoScalingGroups[0].{DesiredCapacity:DesiredCapacity,RunningCount:length(Instances[?LifecycleState==`InService`])}' \
+            --output table
+
+      - name: Summary
+        run: |
+          echo "## GPU Toggle Complete" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ "${{ github.event.inputs.action }}" == "enable" ]; then
+            echo "GPU worker has been **enabled**." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "The instance will be ready in 2-3 minutes." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "**Remember to disable when done to stop costs!**" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "GPU worker has been **disabled**." >> $GITHUB_STEP_SUMMARY
+            echo "" >> $GITHUB_STEP_SUMMARY
+            echo "No GPU costs will be incurred." >> $GITHUB_STEP_SUMMARY
+          fi

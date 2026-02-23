@@ -1,0 +1,27 @@
+name: video-preprocessing
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+channel_priority: strict
+dependencies:
+  - python=3.10
+  - pip
+  - opencv>=4.8.0
+  - ffmpeg
+  - pytorch=2.1.*
+  - torchvision=0.16.*
+  - pytorch-cuda=12.1
+  - numpy<2
+  - pip:
+    - ultralytics>=8.0.0
+    - nats-py>=2.6.0
+    - pyyaml>=6.0.1
+    - numpy>=1.24.0
+    - pandas
+    - scikit-learn
+    - xgboost
+    - joblib
+    - boto3
+

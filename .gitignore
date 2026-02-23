@@ -1,0 +1,125 @@
+research/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+.venv
+*.egg-info/
+dist/
+build/
+
+data/ap10k/**/*
+data/ap-10k/**/*
+
+data/Cow Pose Estimation/**/*
+data/cow_pose_combined/**/*
+data/cow_pose_full/**/*
+data/pose_datasets/**/*
+
+data/video_annotations/**/*
+
+data/cow-pose-yolo/**/*
+
+
+data/cow_pose_lameness/**/*
+data/cow-pose-estimation.v1.yolov8/**/*
+data/cow-pose-estimation.v1i.yolov8/**/*
+
+data/test_results/**/*
+
+runs/cow_pose/**/*
+runs/pose/**/*
+
+data/ap-10k.zip
+
+
+
+
+
+
+
+
+
+
+# Conda
+.conda/
+
+# Data
+data/videos/*
+data/processed/*
+data/training/*
+data/results/*
+!data/videos/.gitkeep
+!data/processed/.gitkeep
+!data/training/.gitkeep
+!data/results/.gitkeep
+
+# Models
+shared/models/*
+!shared/models/.gitkeep
+
+# YOLOv8 pose models (root level)
+yolov8m-pose.pt
+yolov8n-pose.pt
+
+# Cow pose models
+data/models/cow_pose_combined.pt
+data/models/cow_pose_full.pt
+data/models/cow_pose_yolov8n.pt
+data/models/rtmpose/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Environment
+.env
+.env.local
+
+# Node
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# Build
+dist/
+build/
+*.tsbuildinfo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Terraform
+terraform/.terraform/
+terraform/.terraform.lock.hcl
+terraform/*.tfstate
+terraform/*.tfstate.backup
+terraform/terraform.tfvars
+terraform/*.auto.tfvars
+terraform/crash.log
+terraform/.terraform.tfstate.lock.info
+
+# AWS
+.aws/
+
+# Secrets (should never be committed)
+*.pem
+*.key
+credentials.json
+secrets.yaml

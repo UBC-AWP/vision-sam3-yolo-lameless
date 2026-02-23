@@ -1,0 +1,27 @@
+# Terraform Variables Example
+# Copy this file to terraform.tfvars and fill in the values
+
+# General Configuration
+project_name = "cow-lameness"
+environment  = "production"
+aws_region   = "us-east-1"
+
+# Networking
+vpc_cidr = "10.0.0.0/16"
+
+# Database (REQUIRED - set secure password)
+db_password = "CHANGE_ME_secure_password_here"
+
+# Security (REQUIRED - set secure JWT secret)
+jwt_secret = "CHANGE_ME_secure_jwt_secret_here"
+
+# Container Registry (set after creating ECR repositories)
+# ecr_registry = "123456789012.dkr.ecr.us-east-1.amazonaws.com"
+
+# SSL Certificate (optional - for HTTPS)
+# certificate_arn = "arn:aws:acm:us-east-1:123456789012:certificate/xxx"
+
+# GPU Worker Configuration
+gpu_enabled       = false          # Set to true to enable GPU worker
+gpu_instance_type = "g4dn.xlarge"  # 4 vCPU, 16GB RAM, 1x T4 GPU
+use_spot_instances = true          # Use spot instances for ~70% cost savings

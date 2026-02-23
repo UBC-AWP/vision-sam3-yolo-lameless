@@ -1,0 +1,68 @@
+# Shared configuration for all services
+
+nats:
+  url: nats://nats:4222
+  subjects:
+    video_uploaded: "video.uploaded"
+    video_preprocessed: "video.preprocessed"
+    video_curated: "video.curated"
+    pipeline_yolo: "pipeline.yolo"
+    pipeline_sam3: "pipeline.sam3"
+    pipeline_dinov3: "pipeline.dinov3"
+    pipeline_tleap: "pipeline.tleap"
+    pipeline_tcn: "pipeline.tcn"
+    pipeline_transformer: "pipeline.transformer"
+    pipeline_ml: "pipeline.ml"
+    pipeline_gnn: "pipeline.gnn"
+    pipeline_graph_transformer: "pipeline.graph_transformer"
+    pipeline_fusion: "pipeline.fusion"
+    tracking_complete: "tracking.complete"
+    tracking_reid_match: "tracking.reid.match"
+    tracking_lameness_update: "tracking.lameness.update"
+    analysis_complete: "analysis.complete"
+    training_data_added: "training.data.added"
+    training_yolo_requested: "training.yolo.requested"
+    training_ml_requested: "training.ml.requested"
+    training_completed: "training.completed"
+    hitl_comparison_requested: "hitl.comparison.requested"
+    hitl_comparison_submitted: "hitl.comparison.submitted"
+    rater_reliability_updated: "rater.reliability.updated"
+    cow_prediction_updated: "cow.prediction.updated"
+
+database:
+  url: postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+  pool_size: 10
+  max_overflow: 20
+
+qdrant:
+  url: http://qdrant:6333
+  collection_name: "cow_embeddings"
+
+data:
+  videos_dir: "data/videos"
+  processed_dir: "data/processed"
+  canonical_dir: "data/canonical"
+  training_dir: "data/training"
+  results_dir: "data/results"
+  quality_reports_dir: "data/quality_reports"
+
+models:
+  yolo:
+    weights_path: "shared/models/yolo"
+    confidence_threshold: 0.5
+  sam3:
+    checkpoint_path: "shared/models/sam3"
+  dinov3:
+    model_name: "facebook/dinov2-base"
+  tleap:
+    checkpoint_path: "shared/models/tleap"
+
+training:
+  yolo:
+    min_new_frames: 100
+    batch_size: 16
+    epochs: 100
+  ml:
+    min_new_videos: 10
+    cv_folds: 5
+

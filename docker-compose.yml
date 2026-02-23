@@ -1,0 +1,161 @@
+x-video-preprocessing-base: &video-preprocessing-base
+  build:
+    context: .
+    dockerfile: services/video-preprocessing/Dockerfile
+  volumes:
+    - ./data:/app/data
+    - ./data/weights:/app/weights
+    - ./shared:/app/shared
+    - ./services/video-preprocessing/models:/app/models
+  environment:
+    - NATS_URL=nats://nats:4222
+    - LONG_VIDEO_MODELS_DIR=/app/models
+    - LONG_VIDEO_YOLO_MODEL=/app/weights/yolov8l.pt
+    - NVIDIA_VISIBLE_DEVICES=all
+    - CUDA_VISIBLE_DEVICES=0
+    - S3_VIDEOS_BUCKET=${S3_VIDEOS_BUCKET:-}
+    - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-https://object-arbutus.cloud.computecanada.ca}
+    - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+    - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+    - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+    - S3_SHORT_VIDEOS_PREFIX=${S3_SHORT_VIDEOS_PREFIX:-short_videos/}
+  depends_on:
+    - nats
+    - video-ingestion
+
+services:
+  nats:
+    image: nats:latest
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    command: ["-js", "-m", "8222"]
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "/nats-server", "--help"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_DB: lameness_db
+      POSTGRES_USER: lameness_user
+      POSTGRES_PASSWORD: lameness_pass
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lameness_user -d lameness_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+      - "6334:6334"
+    volumes:
+      - qdrant-data:/qdrant/storage
+    healthcheck:
+      test: ["CMD-SHELL", "timeout 2 bash -c '</dev/tcp/localhost/6333' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  video-ingestion:
+    build:
+      context: .
+      dockerfile: services/video-ingestion/Dockerfile
+    volumes:
+      - ./data/videos:/app/data/videos
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+      - POSTGRES_PORT=5433
+    depends_on:
+      nats:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8001:8000"
+
+  video-preprocessing:
+    <<: *video-preprocessing-base
+    profiles: ["gpu"]
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+
+  video-preprocessing-cpu:
+    <<: *video-preprocessing-base
+    profiles: ["cpu"]
+
+  admin-backend:
+    build:
+      context: .
+      dockerfile: services/admin-interface/backend/Dockerfile
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 16G
+        reservations:
+          memory: 512M
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared
+    environment:
+      - NATS_URL=nats://nats:4222
+      - POSTGRES_URL=postgresql://lameness_user:lameness_pass@postgres:5432/lameness_db
+      - POSTGRES_PORT=5433
+      - QDRANT_URL=http://qdrant:6333
+      # Storage backend: "local" for development, "s3" for object storage
+      - STORAGE_BACKEND=${STORAGE_BACKEND:-local}
+      - S3_VIDEOS_BUCKET=${S3_VIDEOS_BUCKET:-}
+      - S3_ENDPOINT_URL=${S3_ENDPOINT_URL:-https://object-arbutus.cloud.computecanada.ca}
+      - S3_ACCESS_KEY_ID=${S3_ACCESS_KEY_ID:-}
+      - S3_SECRET_ACCESS_KEY=${S3_SECRET_ACCESS_KEY:-}
+      - S3_FORCE_PATH_STYLE=${S3_FORCE_PATH_STYLE:-true}
+      - DEFAULT_TENANT_NAME=${DEFAULT_TENANT_NAME:-Farm1}
+      - S3_LONG_VIDEOS_PREFIX=${S3_LONG_VIDEOS_PREFIX:-raw_videos/}
+      - S3_SHORT_VIDEOS_PREFIX=${S3_SHORT_VIDEOS_PREFIX:-short_videos/}
+      - BOTO_LOG_LEVEL=${BOTO_LOG_LEVEL:-}
+    depends_on:
+      - nats
+      - postgres
+      - qdrant
+    ports:
+      - "8000:8000"
+
+  admin-frontend:
+    build:
+      context: .
+      dockerfile: services/admin-interface/frontend/Dockerfile
+    volumes:
+      - ./services/admin-interface/frontend:/app
+      - /app/node_modules
+    environment:
+      - VITE_API_URL=http://localhost:8000
+    depends_on:
+      - admin-backend
+    ports:
+      - "3000:3000"
+
+volumes:
+  nats-data:
+  postgres-data:
+  qdrant-data:
+

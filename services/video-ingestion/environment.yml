@@ -1,0 +1,19 @@
+name: video-ingestion
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - fastapi>=0.104.0
+    - uvicorn[standard]>=0.24.0
+    - pydantic>=2.5.0
+    - python-multipart>=0.0.6
+    - aiofiles>=23.2.0
+    - nats-py>=2.6.0
+    - sqlalchemy>=2.0.0
+    - psycopg2-binary>=2.9.9
+    - python-dotenv>=1.0.0
+    - pyyaml>=6.0.1
+

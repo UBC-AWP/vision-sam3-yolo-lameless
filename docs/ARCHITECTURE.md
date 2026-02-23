@@ -1,0 +1,764 @@
+# Lameness Detection Platform — Architecture
+
+## Table of contents
+- [Overview](#overview)
+- [What’s new in the current architecture (2026)](#whats-new-in-the-current-architecture-2026)
+- [System architecture diagram](#system-architecture-diagram)
+- [Core components](#core-components)
+- [Pipeline architecture](#pipeline-architecture)
+- [Human-in-the-loop system](#human-in-the-loop-system)
+- [Data flow](#data-flow)
+- [Service catalog](#service-catalog)
+- [Technology stack](#technology-stack)
+- [Deployment](#deployment)
+
+---
+
+## Overview
+
+The Lameness Detection Platform is a comprehensive multi-pipeline system for automated dairy cow lameness detection. It combines:
+
+- **Computer Vision** (YOLO, SAM3, DINOv3)
+- **Pose Estimation** (T-LEAP style)
+- **Deep Learning** (TCN, Transformer, Graph Transformer)
+- **Traditional ML** (XGBoost, CatBoost, LightGBM)
+- **Human-in-the-Loop** (Pairwise/Triplet comparisons, Elo ranking)
+- **Explainable AI** (SHAP, LLM explanations)
+
+The platform processes uploaded videos into canonical clips, runs multiple CV/pose/graph/ML pipelines, and fuses all evidence into an explainable lameness prediction.
+
+This document is meant to be **code-accurate** for this repository. For the step-by-step pipeline walkthrough (SAM3, DINOv3, T‑LEAP and how features feed ML), see `docs/PIPELINES_DETAILED.md`.
+
+---
+
+## What’s new in the current architecture (2026)
+
+### Cow identity (ID) and Cow Registry
+
+- A dedicated **`tracking-service`** assigns persistent **cow IDs** across videos using:
+  - within-video tracking (ByteTrack-style)
+  - cross-video Re-ID using **DINOv3 embeddings + Qdrant vector search**
+- The Admin UI includes a **Cow Registry** page (`/cows`) and a Cow Detail page (`/cows/:cowId`) backed by `admin-backend` endpoints under `/api/cows/*`.
+
+### Graph-based predictors
+
+- In addition to tabular ML and time-series models, the repo includes graph-based predictors:
+  - `gnn-pipeline` (graph reasoning)
+  - `graph-transformer-pipeline` (Graphormer-style)
+
+### Canonical “source of truth” for data contracts
+
+- NATS subjects and datastore URLs are defined in `shared/config/config.yaml`.
+- Most pipelines both:
+  - write a result file under `data/results/<pipeline>/...`
+  - publish a NATS message referencing `results_path` and `features`.
+
+---
+
+## System Architecture Diagram
+
+### Mermaid (recommended)
+
+```mermaid
+flowchart TB
+  %% ======= Clients / UI =======
+  subgraph UI[Admin UI]
+    FE[admin-frontend<br/>React + TS]
+    BE[admin-backend<br/>FastAPI]
+  end
+
+  %% ======= Infra =======
+  subgraph Infra[Infrastructure]
+    NATS[(NATS)]
+    PG[(Postgres)]
+    QD[(Qdrant)]
+    FS[(Filesystem<br/>data/videos + data/processed + data/results)]
+  end
+
+  %% ======= Video lifecycle =======
+  subgraph Video[Video lifecycle]
+    ING[video-ingestion]
+    PRE[video-preprocessing]
+    CUR[clip-curation]
+  end
+
+  %% ======= Feature pipelines =======
+  subgraph Feat[Feature extraction]
+    YOLO[yolo-pipeline]
+    SAM3[sam3-pipeline]
+    DINO[dinov3-pipeline]
+    TLEAP[tleap-pipeline]
+  end
+
+  %% ======= Identity =======
+  subgraph ID[Identity / Tracking]
+    TRACK[tracking-service<br/>ByteTrack + Re-ID]
+  end
+
+  %% ======= Predictors =======
+  subgraph Pred[Predictors]
+    ML[ml-pipeline]
+    TCN[tcn-pipeline]
+    TR[transformer-pipeline]
+    GNN[gnn-pipeline]
+    GT[graph-transformer-pipeline]
+  end
+
+  FUS[fusion-service]
+
+  %% ======= UI wiring =======
+  FE -->|HTTP| BE
+  BE --> PG
+  BE --> FS
+
+  %% ======= Message bus =======
+  ING -->|video.uploaded| NATS
+  PRE -->|video.preprocessed| NATS
+  CUR -->|video.curated| NATS
+
+  %% ======= Feature extraction from preprocessed videos =======
+  NATS --> YOLO
+  NATS --> SAM3
+  NATS --> DINO
+  NATS --> TLEAP
+
+  YOLO -->|pipeline.yolo| NATS
+  SAM3 -->|pipeline.sam3| NATS
+  DINO -->|pipeline.dinov3| NATS
+  TLEAP -->|pipeline.tleap| NATS
+
+  %% ======= Storage side effects =======
+  PRE --> FS
+  CUR --> FS
+  YOLO --> FS
+  SAM3 --> FS
+  DINO --> FS
+  DINO --> QD
+  TLEAP --> FS
+
+  %% ======= Tracking / cow registry =======
+  NATS --> TRACK
+  TRACK --> PG
+  TRACK --> FS
+  TRACK -->|tracking.complete| NATS
+
+  %% ======= Predictors =======
+  NATS --> ML
+  NATS --> TCN
+  NATS --> TR
+  NATS --> GNN
+  NATS --> GT
+
+  ML -->|pipeline.ml| NATS
+  TCN -->|pipeline.tcn| NATS
+  TR -->|pipeline.transformer| NATS
+  GNN -->|pipeline.gnn| NATS
+  GT -->|pipeline.graph_transformer| NATS
+
+  %% ======= Fusion =======
+  NATS --> FUS
+  FUS -->|pipeline.fusion| NATS
+  FUS --> FS
+  FUS -->|analysis.complete| NATS
+```
+
+### Detailed ASCII Diagram (updated)
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              FRONTEND INTERFACES                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │ Data Upload  │  │  Pairwise    │  │   Triplet    │  │  Training Module     │ │
+│  │              │  │  Comparison  │  │  Comparison  │  │  (Lameness Duolingo) │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+│                                                                                  │
+│  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
+│  │  Hierarchy   │  │  Similarity  │  │   Results    │  │   Video Analysis     │ │
+│  │  Viz (Elo)   │  │  Map (MDS)   │  │    Page      │  │   Dashboard          │ │
+│  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────────────┘ │
+│                                                                                  │
+└──────────────────────────────────────┬──────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              BACKEND GATEWAY                                     │
+│                         (FastAPI Admin Backend)                                  │
+└──────────────────────────────────────┬──────────────────────────────────────────┘
+                                       │
+                    ┌──────────────────┴──────────────────┐
+                    ▼                                      ▼
+┌───────────────────────────────────┐    ┌───────────────────────────────────────┐
+│         MESSAGE BUS (NATS)        │    │           DATA STORES                 │
+│                                   │    │                                       │
+│  Subjects:                        │    │  ┌─────────────┐  ┌────────────────┐  │
+│  • video.uploaded                 │    │  │ PostgreSQL  │  │    Qdrant      │  │
+│  • video.preprocessed             │    │  │ (Users + Cow │  │  (Embeddings)  │  │
+│  • video.curated                  │    │  │  Registry)  │  └────────────────┘  │
+│  • pipeline.{yolo,sam3,dinov3}    │    │  └─────────────┘                       │
+│  • pipeline.{tleap,tcn,transformer}│   │                                       │
+│  • pipeline.{gnn,graph_transformer,ml,fusion}                                   │
+│  • tracking.{complete,reid.match} │    │  ┌─────────────────────────────────┐  │
+│  • hitl.comparison.submitted      │    │  │     File System (Videos)        │  │
+│  • analysis.complete              │    │  │  /data/videos, /data/processed  │  │
+│                                   │    │  │  /data/results, /data/quality   │  │
+└───────────────────┬───────────────┘    └───────────────────────────────────────┘
+                    │
+                    ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                           PROCESSING PIPELINES                                   │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                        VIDEO PREPROCESSING LAYER                            ││
+│  │  ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────────────┐  ││
+│  │  │ Video Ingestion │───▶│  Preprocessing  │───▶│   Clip Curation         │  ││
+│  │  │                 │    │  (YOLO detect)  │    │   (5s canonical clips)  │  ││
+│  │  └─────────────────┘    └─────────────────┘    └─────────────────────────┘  ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                       │                                          │
+│                                       ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                    FEATURE EXTRACTION LAYER (PARALLEL)                      ││
+│  │                                                                             ││
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐    ││
+│  │  │     YOLO     │  │    SAM3      │  │   DINOv3     │  │   T-LEAP     │    ││
+│  │  │  Detection   │  │ Segmentation │  │  Embeddings  │  │    Pose      │    ││
+│  │  │              │  │              │  │              │  │              │    ││
+│  │  │ • Bounding   │  │ • Silhouette │  │ • 768-dim    │  │ • Keypoints  │    ││
+│  │  │   boxes      │  │   masks      │  │   vectors    │  │ • Locomotion │    ││
+│  │  │ • Confidence │  │ • Area/shape │  │ • Similarity │  │   features   │    ││
+│  │  └──────────────┘  └──────────────┘  └──────────────┘  └──────────────┘    ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                       │                                          │
+│                                       ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                         IDENTITY / TRACKING                                 ││
+│  │                                                                             ││
+│  │  ┌──────────────────────────────┐                                           ││
+│  │  │        tracking-service      │                                           ││
+│  │  │  • within-video tracking     │                                           ││
+│  │  │  • cross-video Re-ID (QD)    │                                           ││
+│  │  │  • writes Cow Registry (PG)  │                                           ││
+│  │  └──────────────────────────────┘                                           ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                       │                                          │
+│                                       ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                      DEEP LEARNING LAYER (PARALLEL)                         ││
+│  │                                                                             ││
+│  │  ┌────────────────────┐  ┌────────────────────┐  ┌────────────────────┐    ││
+│  │  │         TCN        │  │    Transformer     │  │   Graph Pipelines  │    ││
+│  │  │                    │  │                    │  │ (GNN + Graphormer) │    ││
+│  │  │ • Dilated Conv1D   │  │ • Self-attention   │  │ • similarity graph │    ││
+│  │  │ • Temporal patterns│  │ • Positional enc   │  │ • neighbor context │    ││
+│  │  │ • MC Dropout       │  │ • Saliency output  │  │ • uncertainty      │    ││
+│  │  │ • Uncertainty est  │  │ • Masking for gaps │  │                    │    ││
+│  │  └────────────────────┘  └────────────────────┘  └────────────────────┘    ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                       │                                          │
+│                                       ▼                                          │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                         ML ENSEMBLE LAYER                                   ││
+│  │                                                                             ││
+│  │  ┌──────────────┐  ┌──────────────┐  ┌──────────────┐                      ││
+│  │  │   XGBoost    │  │   CatBoost   │  │   LightGBM   │                      ││
+│  │  │              │  │              │  │              │                      ││
+│  │  └──────────────┘  └──────────────┘  └──────────────┘                      ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                                                                  │
+└──────────────────────────────────────┬──────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          HUMAN-IN-THE-LOOP LAYER                                 │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌──────────────────┐  ┌──────────────────┐  ┌──────────────────────────────┐   │
+│  │ Pairwise Review  │  │ Triplet Compare  │  │    Rater Reliability         │   │
+│  │                  │  │                  │  │                              │   │
+│  │ • 7-point scale  │  │ • Reference-based│  │ • Dawid-Skene algorithm      │   │
+│  │ • Tutorial mode  │  │ • Similarity/    │  │ • GLAD model                 │   │
+│  │ • Elo ranking    │  │   dissimilarity  │  │ • Gold task injection        │   │
+│  └──────────────────┘  └──────────────────┘  │ • Bronze/Silver/Gold tiers   │   │
+│                                              └──────────────────────────────┘   │
+│                                                                                  │
+└──────────────────────────────────────┬──────────────────────────────────────────┘
+                                       │
+                                       ▼
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                              FUSION & EXPLANATION                                │
+├─────────────────────────────────────────────────────────────────────────────────┤
+│                                                                                  │
+│  ┌─────────────────────────────────────────────────────────────────────────────┐│
+│  │                         FUSION SERVICE                                      ││
+│  │                                                                             ││
+│  │  Inputs:                          Fusion Strategy:                          ││
+│  │  • ML ensemble (25%)              • Rule-based gating                       ││
+│  │  • TCN (15%)                      • Stacking meta-model                     ││
+│  │  • Transformer (15%)              • Confidence calibration                  ││
+│  │  • GNN (15%)                      • Agreement tracking                      ││
+│  │  • Human consensus (30%)                                                    ││
+│  │                                                                             ││
+│  │  Output: final_probability, confidence, recommendation                      ││
+│  └─────────────────────────────────────────────────────────────────────────────┘│
+│                                       │                                          │
+│                                       ▼                                          │
+│  ┌──────────────────────────┐  ┌──────────────────────────┐                     │
+│  │      SHAP Service        │  │      LLM Service         │                     │
+│  │                          │  │                          │                     │
+│  │ • Local explanations     │  │ • Evidence-based summary │                     │
+│  │ • Feature importance     │  │ • Key indicators         │                     │
+│  │ • Force plots            │  │ • Action recommendations │                     │
+│  └──────────────────────────┘  └──────────────────────────┘                     │
+│                                                                                  │
+└─────────────────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Core Components
+
+### 1. Video Processing
+
+| Component | Purpose | Key Features |
+|-----------|---------|--------------|
+| **Video Ingestion** | Accept uploads | Format validation, metadata extraction |
+| **Video Preprocessing** | Detect & crop cow | YOLO detection, bounding box tracking |
+| **Clip Curation** | Extract optimal 5s | Quality scoring, direction normalization |
+
+### 2. Feature Extraction Pipelines
+
+| Pipeline | Model | Output Features |
+|----------|-------|-----------------|
+| **YOLO** | YOLOv8n | Bounding boxes, detection confidence, position stability |
+| **SAM3** | Segment Anything 3 | Silhouette masks, area ratio, circularity, aspect ratio |
+| **DINOv3** | DINOv2-base | 768-dim embeddings, kNN similarity |
+| **T-LEAP** | YOLOv8-Pose | 20 keypoints, back arch, head bob, leg asymmetry |
+
+### 3. Deep Learning Pipelines
+
+| Pipeline | Architecture | Specialty |
+|----------|--------------|-----------|
+| **TCN** | Temporal Convolutional Network | Dilated causal convolutions, large receptive field |
+| **Transformer** | Encoder-only Transformer | Self-attention, positional encoding, saliency maps |
+| **GraphGPS** | Graph Transformer | kNN edges, Laplacian PE, local + global attention |
+
+### 4. ML Ensemble
+
+| Model | Type | Strengths |
+|-------|------|-----------|
+| **XGBoost** | Gradient Boosting | Speed, regularization |
+| **CatBoost** | Gradient Boosting | Categorical features, less overfitting |
+| **LightGBM** | Gradient Boosting | Memory efficient, large datasets |
+
+---
+
+## Pipeline Architecture
+
+### Processing Flow
+
+```
+┌──────────────────────────────────────────────────────────────────┐
+│                         VIDEO UPLOAD                              │
+│                        (30s raw video)                            │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                       CLIP CURATION                               │
+│                                                                   │
+│  1. Track cow through video (centroid tracking)                   │
+│  2. Identify walking passes (direction changes)                   │
+│  3. Score 5s windows:                                            │
+│     • Framing score (25%) - bbox size, edge proximity            │
+│     • Steadiness score (25%) - speed consistency                 │
+│     • Straightness score (15%) - vertical deviation              │
+│     • Visual quality (15%) - blur, brightness                    │
+│     • Occlusion score (10%) - detection confidence               │
+│     • Progress penalty (10%) - mid-pass preferred                │
+│  4. Normalize direction (flip to left→right)                     │
+│  5. Export canonical_5s_clip.mp4 + quality_report.json           │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+          ┌────────────────────┼────────────────────┐
+          │                    │                    │
+          ▼                    ▼                    ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│   YOLO + SAM3   │  │     DINOv3      │  │     T-LEAP      │
+│   (Visual)      │  │  (Embeddings)   │  │     (Pose)      │
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          │                   │                   │
+          ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│       TCN       │  │   Transformer   │  │     GraphGPS    │
+│  (Time-series)  │  │  (Time-series)  │  │    (Relational) │
+└────────┬────────┘  └────────┬────────┘  └────────┬────────┘
+         │                    │                    │
+         └────────────────────┼────────────────────┘
+                              │
+                              ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                        ML ENSEMBLE                                │
+│              XGBoost + CatBoost + LightGBM                       │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                      FUSION SERVICE                               │
+│                                                                   │
+│  Inputs weighted by confidence:                                   │
+│  ┌────────────┬────────────┬────────────┬────────────┬────────┐ │
+│  │    ML      │    TCN     │ Transformer│    GNN     │ Human  │ │
+│  │   (25%)    │   (15%)    │   (15%)    │   (15%)    │ (30%)  │ │
+│  └────────────┴────────────┴────────────┴────────────┴────────┘ │
+│                                                                   │
+│  Decision modes:                                                  │
+│  • "human" - High human confidence + sufficient raters           │
+│  • "automated" - Strong model agreement + high confidence        │
+│  • "hybrid" - Combine all sources                                │
+│  • "uncertain" - Request more labels                             │
+└──────────────────────────────┬───────────────────────────────────┘
+                               │
+                               ▼
+┌──────────────────────────────────────────────────────────────────┐
+│                     FINAL OUTPUT                                  │
+│                                                                   │
+│  {                                                                │
+│    "final_probability": 0.73,                                     │
+│    "final_prediction": 1,  // Lame                               │
+│    "confidence": 0.82,                                           │
+│    "decision_mode": "hybrid",                                    │
+│    "recommendation": "Consider veterinary examination",          │
+│    "pipeline_contributions": {...},                              │
+│    "shap_explanation": {...},                                    │
+│    "llm_summary": "This cow shows signs of lameness..."          │
+│  }                                                                │
+└──────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Human-in-the-Loop System
+
+### Comparison Types
+
+#### Pairwise Comparison (7-Point Scale)
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     PAIRWISE COMPARISON                          │
+│                                                                  │
+│  ┌──────────────┐              ┌──────────────┐                 │
+│  │   Video A    │     VS       │   Video B    │                 │
+│  │              │              │              │                 │
+│  └──────────────┘              └──────────────┘                 │
+│                                                                  │
+│  Scale:                                                          │
+│  [-3] A Much More Lame                                          │
+│  [-2] A More Lame                                               │
+│  [-1] A Slightly More Lame                                      │
+│  [ 0] Equal / Cannot Decide                                     │
+│  [+1] B Slightly More Lame                                      │
+│  [+2] B More Lame                                               │
+│  [+3] B Much More Lame                                          │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+#### Triplet Comparison
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                     TRIPLET COMPARISON                           │
+│                                                                  │
+│                    ┌──────────────┐                             │
+│                    │  Reference   │                             │
+│                    │              │                             │
+│                    └──────────────┘                             │
+│                           │                                      │
+│            ┌──────────────┴──────────────┐                      │
+│            ▼                              ▼                      │
+│     ┌──────────────┐              ┌──────────────┐              │
+│     │ Comparison A │              │ Comparison B │              │
+│     │              │              │              │              │
+│     └──────────────┘              └──────────────┘              │
+│                                                                  │
+│  Question: "Which walks MORE SIMILARLY to the reference?"        │
+│           or "Which walks MORE DIFFERENTLY from the reference?"  │
+└─────────────────────────────────────────────────────────────────┘
+```
+
+### Rater Reliability System
+
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    RATER RELIABILITY                             │
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │              DAWID-SKENE ALGORITHM                          ││
+│  │                                                             ││
+│  │  Simultaneously infers:                                     ││
+│  │  • True labels for items                                    ││
+│  │  • Confusion matrices for each rater                        ││
+│  │                                                             ││
+│  │  E-step: Estimate posterior over true labels                ││
+│  │  M-step: Update class priors and rater error rates          ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │                    RATER TIERS                              ││
+│  │                                                             ││
+│  │  🥉 Bronze: Gold accuracy < 70%   → Weight: 0.5x            ││
+│  │  🥈 Silver: Gold accuracy 70-85%  → Weight: 1.0x            ││
+│  │  🥇 Gold:   Gold accuracy > 85%   → Weight: 1.5x            ││
+│  │                                                             ││
+│  │  Tier determines:                                           ││
+│  │  • Vote weight in consensus                                 ││
+│  │  • Access to real labeling tasks                            ││
+│  │  • Leaderboard position                                     ││
+│  └─────────────────────────────────────────────────────────────┘│
+│                                                                  │
+│  ┌─────────────────────────────────────────────────────────────┐│
+│  │              GOLD TASK INJECTION                            ││
+│  │                                                             ││
+│  │  • 10% of tasks are pre-labeled by experts                  ││
+│  │  • Used to validate rater accuracy                          ││
+│  │  • Raters don't know which tasks are gold                   ││
+│  └─────────────────────────────────────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Data Flow
+
+### NATS Message Subjects
+
+Source of truth: `shared/config/config.yaml`
+
+| Subject | Publisher | Subscribers | Notes |
+|---------|-----------|-------------|------|
+| `video.uploaded` | video-ingestion | video-preprocessing, clip-curation | new raw upload |
+| `video.preprocessed` | video-preprocessing | yolo/sam3/dinov3/tleap/etc | processed video path available |
+| `video.curated` | clip-curation | (optional) downstream consumers | canonical clip ready |
+| `pipeline.yolo` | yolo-pipeline | tracking-service, (others) | bbox detections + aggregate features |
+| `pipeline.sam3` | sam3-pipeline | ml-pipeline | segmentation-derived features |
+| `pipeline.dinov3` | dinov3-pipeline | tracking-service, gnn/graph-transformer | embeddings + similar_cases + neighbor_evidence |
+| `pipeline.tleap` | tleap-pipeline | tcn/transformer/ml | pose sequences + locomotion features |
+| `pipeline.tcn` | tcn-pipeline | fusion-service | time-series score |
+| `pipeline.transformer` | transformer-pipeline | fusion-service | time-series score + attention info |
+| `pipeline.gnn` | gnn-pipeline | fusion-service | graph-based score |
+| `pipeline.graph_transformer` | graph-transformer-pipeline | fusion-service | graph transformer score + uncertainty |
+| `pipeline.ml` | ml-pipeline | fusion-service | tabular ensemble prediction |
+| `tracking.complete` | tracking-service | (optional) consumers | track assignment written + summary published |
+| `tracking.reid.match` | tracking-service | (optional) consumers | re-id match events |
+| `tracking.lameness.update` | tracking-service | (optional) consumers | cow-level lameness DB update event |
+| `pipeline.fusion` | fusion-service | admin-backend (via files), shap/llm | final probability + confidence |
+| `analysis.complete` | fusion-service | llm-service | high-level “analysis done” hook |
+
+---
+
+## Service Catalog
+
+### Infrastructure Services
+
+| Service | Port | Description |
+|---------|------|-------------|
+| **NATS** | 4222 | Message broker for inter-service communication |
+| **PostgreSQL** | 5432 | Metadata storage (videos, labels, comparisons) |
+| **Qdrant** | 6333 | Vector database for DINOv3 embeddings |
+
+### Application Services
+
+| Service | Description | Input | Output |
+|---------|-------------|-------|--------|
+| **video-ingestion** | Accepts video uploads | Raw video file | `video.uploaded` event |
+| **video-preprocessing** | Detects and crops cow | Raw video | Cropped video |
+| **clip-curation** | Extracts optimal 5s clip | 30s video | Canonical clip + quality report |
+| **yolo-pipeline** | Object detection | Video frames | Bounding boxes, confidence |
+| **sam3-pipeline** | Segmentation | Video frames | Silhouette masks |
+| **dinov3-pipeline** | Feature embeddings | Video frames | 768-dim vectors |
+| **tleap-pipeline** | Pose estimation | Video frames | Keypoints, locomotion metrics |
+| **tcn-pipeline** | Temporal analysis | Pose sequence | Severity score, uncertainty |
+| **transformer-pipeline** | Temporal analysis | Pose sequence | Severity score, saliency |
+| **gnn-pipeline** | Graph reasoning | All features | Score, neighbor context |
+| **graph-transformer-pipeline** | Graph transformer reasoning | All features | Score, uncertainty, attention info |
+| **tracking-service** | Tracking + cross-video cow Re-ID | YOLO + DINOv3 | Cow IDs + per-video track history |
+| **ml-pipeline** | Tabular ML | All features | Ensemble prediction |
+| **fusion-service** | Prediction fusion | All predictions | Final probability |
+| **rater-reliability** | Rater modeling | Comparisons | Rater weights, consensus |
+| **shap-service** | Explainability | Features, prediction | SHAP values |
+| **llm-service** | Natural language | All evidence | Human-readable summary |
+| **admin-backend** | REST API | HTTP requests | JSON responses |
+| **admin-frontend** | Web UI | User actions | React components |
+
+---
+
+## Technology Stack
+
+### Backend
+- **Python 3.10** - Core language
+- **FastAPI** - REST API framework
+- **NATS** - Message broker
+- **PyTorch** - Deep learning (TCN, Transformer, GraphGPS)
+- **PyTorch Geometric** - Graph neural networks
+- **Ultralytics** - YOLO models
+- **scikit-learn** - ML utilities
+- **XGBoost/CatBoost/LightGBM** - Gradient boosting
+- **OpenCV** - Video processing
+- **SHAP** - Explainability
+
+### Frontend
+- **React 18** - UI framework
+- **TypeScript** - Type safety
+- **Tailwind CSS** - Styling
+- **Vite** - Build tool
+- **Axios** - HTTP client
+
+### Infrastructure
+- **Docker** - Containerization
+- **Docker Compose** - Orchestration
+- **PostgreSQL** - Relational database
+- **Qdrant** - Vector database
+- **NATS** - Message queue
+
+---
+
+## Deployment
+
+### Docker Compose Services (22 total)
+
+```yaml
+services:
+  # Infrastructure
+  - nats
+  - postgres
+  - qdrant
+  
+  # Video Processing
+  - video-ingestion
+  - video-preprocessing
+  - clip-curation
+  
+  # Feature Extraction
+  - yolo-pipeline
+  - sam3-pipeline
+  - dinov3-pipeline
+  - tleap-pipeline
+  
+  # Deep Learning
+  - tcn-pipeline
+  - transformer-pipeline
+  - gnn-pipeline
+  
+  # ML & Fusion
+  - ml-pipeline
+  - fusion-service
+  
+  # Human-in-the-Loop
+  - rater-reliability
+  
+  # Explainability
+  - shap-service
+  - llm-service
+  
+  # Admin Interface
+  - admin-backend
+  - admin-frontend
+  
+  # Utilities
+  - annotation-renderer
+  - training-service
+```
+
+### Environment Variables
+
+```bash
+# NATS
+NATS_URL=nats://nats:4222
+
+# PostgreSQL
+POSTGRES_URL=postgresql://user:pass@postgres:5432/lameness_db
+
+# Qdrant
+QDRANT_URL=http://qdrant:6333
+
+# LLM (optional)
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-4o-mini
+```
+
+### Quick Start
+
+```bash
+# Clone repository
+git clone <repository-url>
+cd vision-sam3-yolo-lameless
+
+# Start all services
+docker-compose up -d
+
+# Run tests
+python test_setup.py
+python test_docker.py
+
+# Access interfaces
+# Frontend: http://localhost:3000
+# Backend API: http://localhost:8000
+# API Docs: http://localhost:8000/docs
+```
+
+---
+
+## Appendix: Mermaid Diagram
+
+For tools that support Mermaid rendering:
+
+```mermaid
+flowchart TB
+    subgraph frontend [Frontend Interfaces]
+        Upload[Data Upload]
+        VideoProc[Video Processing UI]
+        Pairwise[Pairwise Comparison]
+        Triplet[Triplet Comparison]
+        Viz[Visualization Dashboard]
+        Training[Training Module]
+    end
+    
+    subgraph backend [Backend Pipelines]
+        Curation[Clip Curation]
+        YOLO[YOLO Detection]
+        SAM3[SAM3 Segmentation]
+        DINO[DINOv3 Embeddings]
+        TLEAP[T-LEAP Pose]
+        TCN[TCN Pipeline]
+        Transformer[Transformer Pipeline]
+        GraphT[Graph Transformer]
+        ML[Tabular ML]
+        Fusion[Ensemble Fusion]
+    end
+    
+    subgraph hitl [Human-in-the-Loop]
+        Consensus[Human Consensus]
+        RaterRel[Rater Reliability]
+        ActiveLearn[Active Learning]
+    end
+    
+    Upload --> Curation
+    Curation --> YOLO & SAM3 & DINO & TLEAP
+    TLEAP --> TCN & Transformer
+    DINO --> GraphT
+    YOLO & SAM3 & DINO & TLEAP & TCN & Transformer & GraphT & ML --> Fusion
+    Consensus --> Fusion
+    Fusion --> Viz
+    ActiveLearn --> Pairwise & Triplet
+```
+
+---
+
+*Document Version: 2.0*  
+*Last Updated: 2026-01-03*
+
