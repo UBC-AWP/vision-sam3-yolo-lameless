@@ -85,7 +85,7 @@ jobs:
         with:
           images: ${{ secrets.DOCKERHUB_USERNAME }}/lameness-${{ matrix.service.name }}
           tags: |
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=latest
             type=sha,prefix=,enable=${{ github.ref == 'refs/heads/main' }}
 
       - name: Build and push
