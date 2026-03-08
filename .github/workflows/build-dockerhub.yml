@@ -5,6 +5,12 @@
 name: Build and Push to Docker Hub
 
 on:
+  push:
+    branches: [deploy-to-openstack]
+    paths:
+      - '.github/workflows/build-dockerhub.yml'
+      - 'services/**'
+      - 'shared/**'
   workflow_dispatch:
 
 env:
