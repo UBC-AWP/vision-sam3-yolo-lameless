@@ -18,7 +18,7 @@ env:
 
 jobs:
   build-and-push:
-    name: Build and push ${{ matrix.service.name }}
+    name: Build and push ${{ matrix.name }}
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -83,7 +83,7 @@ jobs:
         id: meta
         uses: docker/metadata-action@v5
         with:
-          images: ${{ secrets.DOCKERHUB_USERNAME }}/lameness-${{ matrix.service.name }}
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/lameness-${{ matrix.name }}
           tags: |
             type=raw,value=latest
             type=sha,prefix=,enable=${{ github.ref == 'refs/heads/main' }}
@@ -92,7 +92,7 @@ jobs:
         uses: docker/build-push-action@v5
         with:
           context: .
-          file: ${{ matrix.service.dockerfile }}
+          file: ${{ matrix.dockerfile }}
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           cache-from: type=gha
