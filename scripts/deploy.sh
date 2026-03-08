@@ -49,6 +49,12 @@ PROJECT_DIR="$( cd "$SCRIPT_DIR/.." && pwd )"
 
 cd "$PROJECT_DIR"
 
+# Use Docker Hub images when DOCKER_HUB_USER is set (see docker-compose.images.yml)
+if [ -n "${DOCKER_HUB_USER:-}" ]; then
+  export COMPOSE_FILE="${COMPOSE_FILE:-docker-compose.yml}:docker-compose.images.yml"
+  echo -e "${BLUE}Using Docker Hub images: ${DOCKER_HUB_USER}/lameness-*${NC}"
+fi
+
 # Function to wait for service
 wait_for_service() {
     local service=$1
@@ -109,12 +115,16 @@ echo -e "${YELLOW}Step 2: Creating data directories...${NC}"
 mkdir -p data/{videos,canonical,processed,training,results,quality_reports}
 mkdir -p data/results/{yolo,sam3,dinov3,tleap,tcn,transformer,gnn,graph_transformer,ml,fusion,tracking,shap,cow_predictions}
 
-# Step 3: Build images
+# Step 3: Build or pull images
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}Step 3: Building Docker images...${NC}"
     docker compose build
 else
     echo -e "${YELLOW}Step 3: Skipping Docker build (--skip-build)${NC}"
+    if [ -n "${DOCKER_HUB_USER:-}" ]; then
+        echo -e "${YELLOW}Pulling images from Docker Hub...${NC}"
+        docker compose pull
+    fi
 fi
 
 # Step 4: Start infrastructure services

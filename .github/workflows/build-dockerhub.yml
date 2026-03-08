@@ -1,0 +1,95 @@
+# Build all app images and push to Docker Hub.
+# Add secrets: DOCKERHUB_USERNAME, DOCKERHUB_TOKEN (Hub Access Token with Read/Write).
+# Then deploy on a VM with: COMPOSE_FILE=docker-compose.yml:docker-compose.images.yml ./scripts/deploy.sh --skip-build
+
+name: Build and Push to Docker Hub
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+env:
+  REGISTRY: docker.io
+
+jobs:
+  build-and-push:
+    name: Build and push ${{ matrix.service.name }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: video-ingestion
+            dockerfile: services/video-ingestion/Dockerfile
+          - name: video-preprocessing
+            dockerfile: services/video-preprocessing/Dockerfile
+          - name: clip-curation
+            dockerfile: services/clip-curation/Dockerfile
+          - name: yolo-pipeline
+            dockerfile: services/yolo-pipeline/Dockerfile
+          - name: sam3-pipeline
+            dockerfile: services/sam3-pipeline/Dockerfile
+          - name: dinov3-pipeline
+            dockerfile: services/dinov3-pipeline/Dockerfile
+          - name: tleap-pipeline
+            dockerfile: services/tleap-pipeline/Dockerfile
+          - name: tcn-pipeline
+            dockerfile: services/tcn-pipeline/Dockerfile
+          - name: transformer-pipeline
+            dockerfile: services/transformer-pipeline/Dockerfile
+          - name: tracking-service
+            dockerfile: services/tracking-service/Dockerfile
+          - name: gnn-pipeline
+            dockerfile: services/gnn-pipeline/Dockerfile
+          - name: graph-transformer-pipeline
+            dockerfile: services/graph-transformer-pipeline/Dockerfile
+          - name: ml-pipeline
+            dockerfile: services/ml-pipeline/Dockerfile
+          - name: fusion-service
+            dockerfile: services/fusion-service/Dockerfile
+          - name: shap-service
+            dockerfile: services/shap-service/Dockerfile
+          - name: rater-reliability
+            dockerfile: services/rater-reliability/Dockerfile
+          - name: llm-service
+            dockerfile: services/llm-service/Dockerfile
+          - name: training-service
+            dockerfile: services/training-service/Dockerfile
+          - name: annotation-renderer
+            dockerfile: services/annotation-renderer/Dockerfile
+          - name: admin-backend
+            dockerfile: services/admin-interface/backend/Dockerfile
+          - name: admin-frontend
+            dockerfile: services/admin-interface/frontend/Dockerfile
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@v3
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ secrets.DOCKERHUB_USERNAME }}/lameness-${{ matrix.service.name }}
+          tags: |
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=sha,prefix=,enable=${{ github.ref == 'refs/heads/main' }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ${{ matrix.service.dockerfile }}
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          cache-from: type=gha
+          cache-to: type=gha

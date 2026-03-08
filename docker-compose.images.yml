@@ -1,0 +1,96 @@
+# Override to use pre-built images from Docker Hub instead of building locally.
+# Usage:
+#   export DOCKER_HUB_USER=your-dockerhub-username
+#   docker compose -f docker-compose.yml -f docker-compose.images.yml up -d
+# Or: COMPOSE_FILE=docker-compose.yml:docker-compose.images.yml ./scripts/deploy.sh --skip-build
+#
+# Images are expected as: ${DOCKER_HUB_USER}/lameness-<service>:${IMAGE_TAG:-latest}
+
+services:
+  video-ingestion:
+    image: ${DOCKER_HUB_USER:?Set DOCKER_HUB_USER}/lameness-video-ingestion:${IMAGE_TAG:-latest}
+    build: ~
+
+  video-preprocessing:
+    image: ${DOCKER_HUB_USER}/lameness-video-preprocessing:${IMAGE_TAG:-latest}
+    build: ~
+
+  clip-curation:
+    image: ${DOCKER_HUB_USER}/lameness-clip-curation:${IMAGE_TAG:-latest}
+    build: ~
+
+  yolo-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-yolo-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  sam3-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-sam3-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  dinov3-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-dinov3-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  tleap-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-tleap-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  tcn-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-tcn-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  transformer-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-transformer-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  tracking-service:
+    image: ${DOCKER_HUB_USER}/lameness-tracking-service:${IMAGE_TAG:-latest}
+    build: ~
+
+  gnn-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-gnn-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  graph-transformer-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-graph-transformer-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  ml-pipeline:
+    image: ${DOCKER_HUB_USER}/lameness-ml-pipeline:${IMAGE_TAG:-latest}
+    build: ~
+
+  fusion-service:
+    image: ${DOCKER_HUB_USER}/lameness-fusion-service:${IMAGE_TAG:-latest}
+    build: ~
+
+  shap-service:
+    image: ${DOCKER_HUB_USER}/lameness-shap-service:${IMAGE_TAG:-latest}
+    build: ~
+
+  rater-reliability:
+    image: ${DOCKER_HUB_USER}/lameness-rater-reliability:${IMAGE_TAG:-latest}
+    build: ~
+
+  llm-service:
+    image: ${DOCKER_HUB_USER}/lameness-llm-service:${IMAGE_TAG:-latest}
+    build: ~
+
+  training-service:
+    image: ${DOCKER_HUB_USER}/lameness-training-service:${IMAGE_TAG:-latest}
+    build: ~
+
+  annotation-renderer:
+    image: ${DOCKER_HUB_USER}/lameness-annotation-renderer:${IMAGE_TAG:-latest}
+    build: ~
+
+  admin-backend:
+    image: ${DOCKER_HUB_USER}/lameness-admin-backend:${IMAGE_TAG:-latest}
+    build: ~
+
+  admin-frontend:
+    image: ${DOCKER_HUB_USER}/lameness-admin-frontend:${IMAGE_TAG:-latest}
+    build: ~
+    # Pre-built image is self-contained; only mount data and shared for consistency
+    volumes:
+      - ./data:/app/data
+      - ./shared:/app/shared

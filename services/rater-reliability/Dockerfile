@@ -1,4 +1,4 @@
-FROM continuumio/miniconda3:latest
+FROM continuumio/miniconda3:24.1.2-0
 
 WORKDIR /app
 
@@ -8,8 +8,8 @@ RUN conda install -y mamba -n base -c conda-forge
 # Copy environment file
 COPY services/rater-reliability/environment.yml /app/environment.yml
 
-# Create conda environment
-RUN mamba env create -f /app/environment.yml && \
+# Create conda environment (-y non-interactive; only conda-forge in env avoids channel conflicts)
+RUN mamba env create -f /app/environment.yml -y && \
     mamba clean -afy
 
 # Make RUN commands use the new environment
