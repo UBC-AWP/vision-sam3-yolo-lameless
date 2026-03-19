@@ -13,11 +13,11 @@ This guide walks you through running the Cow Lameness Detection ML Pipeline on *
 
 ---
 
-## Pre-built images from Docker Hub (not required)
+## Pre-built images from Docker Hub (recommended)
 
-This deployment guide assumes you will build the required container images **on the VM**. You do not need to create Docker Hub accounts, access tokens, or run the repo’s “Build and Push to Docker Hub” GitHub Actions workflow.
+This deployment guide uses pre-built images from Docker Hub by default. Instead of building all service images on the VM, set your Docker Hub username in `.env` and to prevent rate limiting. All the images currently get built and pushed to [vindictive](https://hub.docker.com/repositories/vindictive). So you might need my account to pull images, otherwise and build and push to ur own docker hub account and login and pull from there.
 
-After the first deployment, you can re-run the deploy script with `--skip-build` to speed up restarts (it will reuse the images already built locally on the VM).
+This mode pulls images from Docker Hub and starts services without local image builds.
 
 ---
 
@@ -104,7 +104,7 @@ Use a **Security Group** (firewall rules for your instance), not a **Server Grou
 
 Note: On Arbutus you may have a **limited number of floating IPs** per project (e.g. one). Use it for the VM that will serve the admin UI and API.
 
-### 1.7 (Optional) Add a volume for persistent data
+### 1.7 Add a volume for persistent data
 
 To keep videos and results across VM rebuilds:
 
@@ -189,36 +189,63 @@ cp env.example .env
 sed -i "s/DEPLOY_HOST=localhost/DEPLOY_HOST=<YOUR_FLOATING_IP>/" .env
 ```
 
-**Building on the VM (no Docker Hub):** This guide does not use pre-built images from Docker Hub. The deploy script builds images locally, so you must keep the service source code and Dockerfiles available on the VM.
+**Use Docker Hub images (no local build):** Add your Docker Hub namespace to `.env`:
 
-Minimum required paths (repo root):
-- `docker-compose.yml`
-- `docker-compose.images.yml`
-- `shared/`
-- `scripts/`
-- `env.example` (to generate `.env`)
-- service source code + Dockerfiles (used by the local build step)
+```bash
+grep -q '^DOCKER_HUB_USER=' .env && \
+  sed -i 's/^DOCKER_HUB_USER=.*/DOCKER_HUB_USER=your-dockerhub-username/' .env || \
+  echo 'DOCKER_HUB_USER=your-dockerhub-username' >> .env
+```
+
+`--skip-build` requires `DOCKER_HUB_USER` and will pull images, then run with `--no-build`.
+
+Before deploy, verify `.env` contains the expected Docker Hub user:
+
+```bash
+grep '^DOCKER_HUB_USER=' .env
+```
+
+Before running deploy, verify Docker and containerd are using your mounted volume (recommended to avoid `no space left on device` on `/var/lib/containerd/...`):
+
+```bash
+docker info | grep "Docker Root Dir"
+sudo readlink -f /var/lib/containerd
+sudo df -h /var/lib/containerd /mnt/lameness-data /
+```
+
+Expected:
+- `Docker Root Dir` points to `/mnt/lameness-data/docker-data` (or your chosen volume path)
+- `/var/lib/containerd` resolves to `/mnt/lameness-data/containerd-data`
+
+If not configured yet, complete the "Increase disk space for Docker" section first, then continue with deploy.
+
 
 ### 2.4 Deploy the application
 
-**Build on the VM** (clone + build; first run can take 20–40+ minutes):
+**Recommended (Docker Hub pull, no local build):**
+
+```bash
+./scripts/deploy.sh --skip-build
+```
+
+The script will pull required images from Docker Hub, start PostgreSQL/NATS/Qdrant, initialize the database and Qdrant, then start all services.
+
+**Optional (build on VM):**
 
 ```bash
 ./scripts/deploy.sh
 ```
 
-The script will build the required images, start PostgreSQL/NATS/Qdrant, initialize the database and Qdrant, then start all services.
-
 Other options:
 
 - Clean start (remove volumes and re-initialize): `./scripts/deploy.sh --clean` or `./scripts/deploy.sh --clean --skip-build`
-- Restart without rebuild (reuse images already built on the VM): `./scripts/deploy.sh --skip-build`
+- Restart and re-pull images from Docker Hub: `./scripts/deploy.sh --skip-build`
 
 The script will:
 
 - Start PostgreSQL, NATS, and Qdrant
 - Initialize the database and Qdrant collections
-- Build (or reuse) images and start all 22 services
+- Pull images (or build if not using `--skip-build`) and start all 22 services
 
 ### 2.5 Verify and access
 
@@ -305,7 +332,7 @@ If the root disk is too small for building or running all images, give Docker mo
 **Option A: Add a dedicated volume for Docker (recommended on OpenStack)**
 
 1. **In the Arbutus dashboard**
-   - **Volumes → Create Volume** (e.g. 100–150 GB, name `docker-data`).
+   - **Volumes → Create Volume** (e.g. 1000 GB, name `docker-data`).
    - After creation, **▼ → Attach Volume** and select your instance. Note the device (e.g. `/dev/vdc`; the actual device may vary, e.g. `/dev/sdb`).
 
 2. **On the VM** — find the device, format it, and mount it:
@@ -322,18 +349,39 @@ If the root disk is too small for building or running all images, give Docker mo
    echo '/dev/vdb /mnt/lameness-data ext4 defaults 0 2' | sudo tee -a /etc/fstab
    ```
 
-3. **Point Docker at the new location**
+3. **Point Docker and containerd at the new location**
+   - Stop services first:
+   ```bash
+   sudo systemctl stop docker
+   sudo systemctl stop containerd
+   ```
    - Create config and set Docker’s data root to the new mount:
    ```bash
    sudo mkdir -p /etc/docker
-   echo '{"data-root": "/mnt/lameness-data"}' | sudo tee /etc/docker/daemon.json
-   sudo systemctl restart docker
+   echo '{"data-root": "/mnt/lameness-data/docker-data"}' | sudo tee /etc/docker/daemon.json
+   sudo mkdir -p /mnt/lameness-data/docker-data
    ```
-   - Confirm Docker is using the new path:
+   - Move containerd data dir to the same volume (prevents extraction snapshot errors on `/var/lib/containerd`):
+   ```bash
+   sudo mkdir -p /mnt/lameness-data/containerd-data
+   if [ -d /var/lib/containerd ] && [ ! -L /var/lib/containerd ]; then
+     sudo rsync -aHAX /var/lib/containerd/ /mnt/lameness-data/containerd-data/
+     sudo mv /var/lib/containerd /var/lib/containerd.bak.$(date +%s)
+   fi
+   sudo ln -sfn /mnt/lameness-data/containerd-data /var/lib/containerd
+   ```
+   - Start services again:
+   ```bash
+   sudo systemctl start containerd
+   sudo systemctl start docker
+   ```
+   - Confirm Docker/containerd are using the volume-backed paths:
    ```bash
    docker info | grep "Docker Root Dir"
+   sudo readlink -f /var/lib/containerd
    ```
-   Should show `/mnt/docker-data`. You can then run `./scripts/deploy.sh` again; images and build cache will use the new volume.
+   `Docker Root Dir` should point to `/mnt/lameness-data/docker-data`, and `/var/lib/containerd` should resolve to `/mnt/lameness-data/containerd-data`.
+   You can then run `./scripts/deploy.sh --skip-build`.
 
 
 ## Summary checklist
@@ -347,7 +395,7 @@ If the root disk is too small for building or running all images, give Docker mo
 | 5 | (Optional) Create and attach a Cinder volume; format and mount on the VM |
 | 6 | SSH into the VM, install Docker and Docker Compose |
 | 7 | Clone repo, `cp env.example .env`, set `DEPLOY_HOST=<FLOATING_IP>` |
-| 8 | Run `./scripts/deploy.sh` (optionally `./scripts/deploy.sh --skip-build` on later restarts) |
+| 8 | Set `DOCKER_HUB_USER` in `.env`, then run `./scripts/deploy.sh --skip-build` |
 | 9 | Open http://\<FLOATING_IP\>:3000 and log in with default credentials |
 
 ---
