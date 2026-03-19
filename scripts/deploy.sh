@@ -99,6 +99,13 @@ while [[ "$#" -gt 0 ]]; do
     shift
 done
 
+# Guardrail: --skip-build should mean "pull + run" (no local build fallback).
+if [ "$SKIP_BUILD" = true ] && [ -z "${DOCKER_HUB_USER:-}" ]; then
+    echo -e "${RED}Error: --skip-build requires DOCKER_HUB_USER in .env (Docker Hub pull mode).${NC}"
+    echo -e "${YELLOW}Add DOCKER_HUB_USER=<your-dockerhub-username> to .env and retry.${NC}"
+    exit 1
+fi
+
 # Step 1: Clean start if requested
 if [ "$CLEAN_START" = true ]; then
     echo -e "${YELLOW}Step 1: Cleaning up existing deployment...${NC}"
@@ -199,7 +206,12 @@ echo -e "${GREEN}Qdrant collections initialized!${NC}"
 
 # Step 7: Start all services
 echo -e "${YELLOW}Step 7: Starting all services...${NC}"
-docker compose up -d
+if [ "$SKIP_BUILD" = true ]; then
+    # Strict no-build mode: fail fast if an image is missing instead of building locally.
+    docker compose up -d --no-build
+else
+    docker compose up -d
+fi
 
 # Step 8: Wait for key services
 echo -e "${YELLOW}Step 8: Waiting for services to be healthy...${NC}"
