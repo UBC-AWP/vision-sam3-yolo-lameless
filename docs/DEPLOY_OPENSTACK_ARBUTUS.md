@@ -13,26 +13,11 @@ This guide walks you through running the Cow Lameness Detection ML Pipeline on *
 
 ---
 
-## Building and pushing images to Docker Hub (one-time setup)
+## Pre-built images from Docker Hub (not required)
 
-To deploy on the VM **without building** (pull pre-built images only), build and push images from the repo using GitHub Actions.
+This deployment guide assumes you will build the required container images **on the VM**. You do not need to create Docker Hub accounts, access tokens, or run the repo’s “Build and Push to Docker Hub” GitHub Actions workflow.
 
-1. **Docker Hub**
-   - Create a [Docker Hub](https://hub.docker.com/) account if needed.
-   - Create an **Access Token**: Account → Security → New Access Token (Read & Write).
-
-2. **GitHub repository secrets**
-   - Repo → **Settings → Secrets and variables → Actions**.
-   - Add:
-     - `DOCKERHUB_USERNAME`: your Docker Hub username.
-     - `DOCKERHUB_TOKEN`: the token from step 1.
-
-3. **Run the workflow**
-   - The workflow **Build and Push to Docker Hub** (`.github/workflows/build-dockerhub.yml`) runs on push to `main`.
-   - To run manually: **Actions → Build and Push to Docker Hub → Run workflow**.
-   - It builds all 21 app images and pushes them as `YOUR_USERNAME/lameness-<service>:latest` (and `:sha` on main).
-
-After the workflow succeeds, you can deploy on the VM using those images (see **Part 2** below, “Deploy from Docker Hub”).
+After the first deployment, you can re-run the deploy script with `--skip-build` to speed up restarts (it will reuse the images already built locally on the VM).
 
 ---
 
@@ -161,6 +146,7 @@ echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.
 sudo apt-get update
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 sudo usermod -aG docker $USER
+sudo systemctl status docker --no-pager
 ```
 
 Log out and back in (or run `newgrp docker`) so `docker` works without `sudo`.
@@ -190,50 +176,49 @@ sudo mkdir -p /mnt/lameness-data/{videos,canonical,processed,training,results,qu
 
 Otherwise the deploy script will create `./data/` under the repo.
 
-Create environment file and set the host to your **floating IP** (so the URLs the deploy script prints are correct):
+Create environment file:
 
 ```bash
 cp env.example .env
-# Edit .env: set DEPLOY_HOST to your floating IP
+```
+
+**DEPLOY_HOST:** Leave `DEPLOY_HOST=localhost` if you only use the app from the VM (e.g. open http://localhost:3000 in a browser on the VM). Set it to your **floating IP** only if you access the UI from your laptop (http://\<FLOATING_IP\>:3000) and want the printed URLs to match:
+
+```bash
+# Optional: only if accessing from outside the VM
 sed -i "s/DEPLOY_HOST=localhost/DEPLOY_HOST=<YOUR_FLOATING_IP>/" .env
 ```
 
-Replace `<YOUR_FLOATING_IP>` with the actual floating IP (e.g. `129.97.xxx.xxx`).
+**Building on the VM (no Docker Hub):** This guide does not use pre-built images from Docker Hub. The deploy script builds images locally, so you must keep the service source code and Dockerfiles available on the VM.
 
-**Deploy from Docker Hub (no build on VM):** If you have run the “Build and Push to Docker Hub” workflow (see above), add your Docker Hub username so the VM only pulls images:
-
-```bash
-echo "DOCKER_HUB_USER=your-dockerhub-username" >> .env
-```
-
-Then use `./scripts/deploy.sh --skip-build` in the next step. The script will pull images from Docker Hub instead of building; no need to copy the full repo for building.
+Minimum required paths (repo root):
+- `docker-compose.yml`
+- `docker-compose.images.yml`
+- `shared/`
+- `scripts/`
+- `env.example` (to generate `.env`)
+- service source code + Dockerfiles (used by the local build step)
 
 ### 2.4 Deploy the application
 
-**Option A — Build on the VM** (clone + build; first run can take 20–40+ minutes):
+**Build on the VM** (clone + build; first run can take 20–40+ minutes):
 
 ```bash
 ./scripts/deploy.sh
 ```
 
-**Option B — Deploy from Docker Hub** (no build; requires `DOCKER_HUB_USER` in `.env` and images already pushed):
-
-```bash
-./scripts/deploy.sh --skip-build
-```
-
-The script will pull the images, start PostgreSQL/NATS/Qdrant, initialize the database and Qdrant, then start all services.
+The script will build the required images, start PostgreSQL/NATS/Qdrant, initialize the database and Qdrant, then start all services.
 
 Other options:
 
 - Clean start (remove volumes and re-initialize): `./scripts/deploy.sh --clean` or `./scripts/deploy.sh --clean --skip-build`
-- Restart without rebuild (when not using Docker Hub): `./scripts/deploy.sh --skip-build`
+- Restart without rebuild (reuse images already built on the VM): `./scripts/deploy.sh --skip-build`
 
 The script will:
 
 - Start PostgreSQL, NATS, and Qdrant
 - Initialize the database and Qdrant collections
-- Build (Option A) or pull (Option B) and start all 22 services
+- Build (or reuse) images and start all 22 services
 
 ### 2.5 Verify and access
 
@@ -311,41 +296,45 @@ docker system df
 
 To start fresh after cleanup, run `./scripts/deploy.sh` again (and re-initialize the DB and data as on first deploy).
 
----
+**If your Docker build fails with "No space left on device"** (e.g. during `mamba env create` in rater-reliability or another service), the VM or machine running Docker has run out of disk. Free space with the steps above (`docker builder prune -a -f` and `docker system prune -a -f --volumes`), then retry the build. If the VM disk is small, use a larger root volume or attach a volume and move Docker’s data dir (see below).
 
-## Part 3: Optional — OpenStack CLI (alternative to dashboard)
+### 2.8 Increase disk space for Docker
 
-If you prefer the command line:
+If the root disk is too small for building or running all images, give Docker more space in one of these ways.
 
-1. **Install OpenStack CLI** (on your laptop or a jump host):
+**Option A: Add a dedicated volume for Docker (recommended on OpenStack)**
+
+1. **In the Arbutus dashboard**
+   - **Volumes → Create Volume** (e.g. 100–150 GB, name `docker-data`).
+   - After creation, **▼ → Attach Volume** and select your instance. Note the device (e.g. `/dev/vdc`; the actual device may vary, e.g. `/dev/sdb`).
+
+2. **On the VM** — find the device, format it, and mount it:
    ```bash
-   pip install python-openstackclient
+   # List block devices to confirm the new volume (e.g. vdc, sdb)
+   lsblk
+   # Format (use the device you see, e.g. /dev/vdb)
+   sudo mkfs.ext4 /dev/vdb
+   sudo mkdir -p /mnt/lameness-data
+   sudo mount /dev/vdb /mnt/lameness-data
+   ```
+   To mount automatically on boot, add to `/etc/fstab`:
+   ```bash
+   echo '/dev/vdb /mnt/lameness-data ext4 defaults 0 2' | sudo tee -a /etc/fstab
    ```
 
-2. **Download OpenStack RC file** from Arbutus:
-   - Dashboard → **Identity → Application Credentials** or **Project → API Access**.
-   - Download **OpenStack RC File** and source it:
-     ```bash
-     source ~/Downloads/your-project-openrc.sh
-     # Enter password when prompted
-     ```
-
-3. **Create instance and floating IP** (example; adjust image, flavor, network, key, security group):
+3. **Point Docker at the new location**
+   - Create config and set Docker’s data root to the new mount:
    ```bash
-   openstack server create \
-     --image "Ubuntu 22.04" \
-     --flavor "c8-32gb" \
-     --network default \
-     --key-name lameness-deploy \
-     --security-group lameness-app \
-     lameness-platform
-   openstack floating ip create public
-   openstack server add floating ip lameness-platform <FLOATING_IP>
+   sudo mkdir -p /etc/docker
+   echo '{"data-root": "/mnt/lameness-data"}' | sudo tee /etc/docker/daemon.json
+   sudo systemctl restart docker
    ```
+   - Confirm Docker is using the new path:
+   ```bash
+   docker info | grep "Docker Root Dir"
+   ```
+   Should show `/mnt/docker-data`. You can then run `./scripts/deploy.sh` again; images and build cache will use the new volume.
 
-Then SSH to `<FLOATING_IP>` and follow **Part 2** from step 2.2.
-
----
 
 ## Summary checklist
 
@@ -357,8 +346,8 @@ Then SSH to `<FLOATING_IP>` and follow **Part 2** from step 2.2.
 | 4 | Associate a floating IP to the instance |
 | 5 | (Optional) Create and attach a Cinder volume; format and mount on the VM |
 | 6 | SSH into the VM, install Docker and Docker Compose |
-| 7 | Clone repo, `cp env.example .env`, set `DEPLOY_HOST=<FLOATING_IP>` (and `DOCKER_HUB_USER` to use pre-built images) |
-| 8 | Run `./scripts/deploy.sh` (or `./scripts/deploy.sh --skip-build` if using Docker Hub images) |
+| 7 | Clone repo, `cp env.example .env`, set `DEPLOY_HOST=<FLOATING_IP>` |
+| 8 | Run `./scripts/deploy.sh` (optionally `./scripts/deploy.sh --skip-build` on later restarts) |
 | 9 | Open http://\<FLOATING_IP\>:3000 and log in with default credentials |
 
 ---

@@ -118,7 +118,46 @@ mkdir -p data/results/{yolo,sam3,dinov3,tleap,tcn,transformer,gnn,graph_transfor
 # Step 3: Build or pull images
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}Step 3: Building Docker images...${NC}"
-    docker compose build
+    # Building all services at once can run multiple heavy steps (e.g., `mamba env create`)
+    # concurrently, which may exhaust disk space during layer creation.
+    # Build sequentially by default; override with COMPOSE_BUILD_SEQUENTIAL=false if desired.
+    if [ "${COMPOSE_BUILD_SEQUENTIAL:-true}" = "true" ]; then
+        echo -e "${BLUE}Sequential builds enabled (reduced parallel disk spikes).${NC}"
+
+        # Collect service names that have a real `build:` section in the active compose config.
+        # Using `docker compose config --format json` keeps this robust across compose overrides.
+        SERVICES="$(python3 - <<'PY'
+import json, subprocess
+
+data = json.loads(subprocess.check_output([
+    "docker", "compose", "config", "--format", "json"
+], text=True))
+
+services = data.get("services", {}) or {}
+
+def has_build(svc):
+    # Compose supports `build: {}`, `build: .`, or `build: null`/missing.
+    # We only want services where build is actually configured.
+    return "build" in svc and bool(svc.get("build"))
+
+names = [name for name, svc in services.items() if has_build(svc)]
+for n in sorted(names):
+    print(n)
+PY
+)"
+
+        if [ -z "$SERVICES" ]; then
+            echo -e "${YELLOW}No buildable services found; falling back to `docker compose build`.${NC}"
+            docker compose build
+        else
+            for svc in $SERVICES; do
+                echo -e "${YELLOW}Building image for service: ${svc}${NC}"
+                docker compose build "$svc"
+            done
+        fi
+    else
+        docker compose build
+    fi
 else
     echo -e "${YELLOW}Step 3: Skipping Docker build (--skip-build)${NC}"
     if [ -n "${DOCKER_HUB_USER:-}" ]; then
