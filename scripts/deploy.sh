@@ -119,7 +119,8 @@ mkdir -p data/results/{yolo,sam3,dinov3,tleap,tcn,transformer,gnn,graph_transfor
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}Step 3: Building Docker images...${NC}"
     # Limit compose build parallelism to reduce peak disk usage during heavy conda/mamba steps.
-    docker compose build --parallel 1
+    # NOTE: `--parallel` is a top-level docker compose flag for some versions.
+    docker compose --parallel 1 build
 else
     echo -e "${YELLOW}Step 3: Skipping Docker build (--skip-build)${NC}"
     if [ -n "${DOCKER_HUB_USER:-}" ]; then
