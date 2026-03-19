@@ -118,9 +118,34 @@ mkdir -p data/results/{yolo,sam3,dinov3,tleap,tcn,transformer,gnn,graph_transfor
 # Step 3: Build or pull images
 if [ "$SKIP_BUILD" = false ]; then
     echo -e "${YELLOW}Step 3: Building Docker images...${NC}"
-    # Limit compose build parallelism to reduce peak disk usage during heavy conda/mamba steps.
-    # NOTE: `--parallel` is a top-level docker compose flag for some versions.
-    docker compose --parallel 1 build
+    # Build one service at a time to avoid concurrent heavy conda/mamba layers
+    # exhausting disk space during image creation.
+    SERVICES="$(python3 - <<'PY'
+import json, subprocess
+
+cfg = json.loads(subprocess.check_output(
+    ["docker", "compose", "config", "--format", "json"],
+    text=True
+))
+
+for name, svc in sorted((cfg.get("services") or {}).items()):
+    if svc.get("build"):
+        print(name)
+PY
+)"
+
+    if [ -z "$SERVICES" ]; then
+        echo -e "${YELLOW}No buildable services found; running default build.${NC}"
+        docker compose build
+    else
+        COUNT=0
+        TOTAL=$(printf "%s\n" "$SERVICES" | wc -l | tr -d ' ')
+        for svc in $SERVICES; do
+            COUNT=$((COUNT + 1))
+            echo -e "${BLUE}Building service ${COUNT}/${TOTAL}: ${svc}${NC}"
+            docker compose build "$svc"
+        done
+    fi
 else
     echo -e "${YELLOW}Step 3: Skipping Docker build (--skip-build)${NC}"
     if [ -n "${DOCKER_HUB_USER:-}" ]; then
