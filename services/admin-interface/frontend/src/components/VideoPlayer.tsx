@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect, useCallback } from 'react'
 import { videosApi } from '@/api/client'
+import { getDemoCows } from '@/utils/demoData'
 
 interface VideoPlayerProps {
   videoId: string
@@ -31,6 +32,22 @@ export default function VideoPlayer({
   useEffect(() => {
     const loadVideoInfo = async () => {
       try {
+        // Check if this is a demo video
+        const demoCows = getDemoCows()
+        const demoCow = demoCows.find(c => c.id === videoId)
+        
+        if (demoCow) {
+          // Use demo video URL directly
+          setStreamUrl(demoCow.videoUrl)
+          setVideoMetadata({
+            duration: 8,
+            fps: 30,
+            frame_count: 240
+          })
+          setHasAnnotated(false)
+          return
+        }
+        
         const info = await videosApi.get(videoId)
         setVideoMetadata(info.metadata)
         setHasAnnotated(info.has_annotated)

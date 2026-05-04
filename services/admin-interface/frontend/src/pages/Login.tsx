@@ -35,7 +35,7 @@ export default function Login() {
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
 
-  const { login, register } = useAuth()
+  const { login, loginAsGuest, register } = useAuth()
   const { resolvedTheme, setTheme } = useTheme()
   const navigate = useNavigate()
   const location = useLocation()
@@ -306,6 +306,24 @@ export default function Login() {
                         <ArrowRight className="h-4 w-4" />
                       </>
                     )}
+                  </button>
+
+                  <div className="relative my-2">
+                    <div className="absolute inset-0 flex items-center">
+                      <div className="w-full border-t border-border/50" />
+                    </div>
+                    <div className="relative flex justify-center text-xs">
+                      <span className="bg-card px-2 text-muted-foreground">or</span>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => { loginAsGuest(); navigate(from, { replace: true }) }}
+                    className="w-full py-2.5 rounded-xl border border-border/60 text-sm font-medium text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors flex items-center justify-center gap-2"
+                  >
+                    Continue as Guest
+                    <span className="text-xs opacity-60">(demo mode, no backend needed)</span>
                   </button>
                 </form>
               )}

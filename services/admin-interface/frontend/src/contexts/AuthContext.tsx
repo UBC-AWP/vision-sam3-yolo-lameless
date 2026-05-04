@@ -32,6 +32,7 @@ interface AuthContextType {
   isAuthenticated: boolean
   isLoading: boolean
   login: (email: string, password: string) => Promise<void>
+  loginAsGuest: () => void
   logout: () => Promise<void>
   register: (email: string, username: string, password: string) => Promise<void>
   refreshToken: () => Promise<boolean>
@@ -202,6 +203,20 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }
 
+  // Guest login – no backend required, purely client-side
+  const loginAsGuest = (): void => {
+    setUser({
+      id: 'guest',
+      email: 'guest@demo.local',
+      username: 'Guest',
+      role: 'rater',
+      is_active: true,
+      rater_tier: null,
+      created_at: new Date().toISOString(),
+      last_login: null,
+    })
+  }
+
   // Register
   const register = async (email: string, username: string, password: string): Promise<void> => {
     await api.post('/api/auth/register', { email, username, password })
@@ -223,6 +238,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
     isAuthenticated: !!user,
     isLoading,
     login,
+    loginAsGuest,
     logout,
     register,
     refreshToken,

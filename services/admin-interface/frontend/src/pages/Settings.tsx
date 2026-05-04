@@ -307,9 +307,7 @@ export default function Settings() {
                   Currently using {themeOptions.find(t => t.value === theme)?.label} theme
                 </h3>
                 <p className="text-sm text-muted-foreground">
-                  {theme === 'system' 
-                    ? `Following your system preference (${resolvedTheme})`
-                    : 'Theme is applied across the application'}
+                  Theme is applied across the application
                 </p>
               </div>
             </div>

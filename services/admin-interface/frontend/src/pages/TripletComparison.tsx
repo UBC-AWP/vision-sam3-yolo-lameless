@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { trainingApi, videosApi } from '@/api/client'
+import { getDemoPairByIndex, parseDemoCSV, type DemoPair } from '@/utils/demoData'
 
 interface TripletTask {
   reference_id: string
@@ -19,6 +20,11 @@ export default function TripletComparison() {
   const [selectedAnswer, setSelectedAnswer] = useState<'A' | 'B' | null>(null)
   const [confidence, setConfidence] = useState<'high' | 'medium' | 'low'>('medium')
   const [stats, setStats] = useState<any>(null)
+  const [showDemo, setShowDemo] = useState(false)
+  
+  // Demo mode for real triplet data
+  const [demoMode, setDemoMode] = useState(false)
+  const [demoTripletIndex, setDemoTripletIndex] = useState(0)
   
   const refVideoRef = useRef<HTMLVideoElement>(null)
   const compAVideoRef = useRef<HTMLVideoElement>(null)
@@ -34,6 +40,41 @@ export default function TripletComparison() {
     setLoading(true)
     setSelectedAnswer(null)
     setIsPlaying(false)
+    
+    if (demoMode) {
+      // Create triplet from demo data
+      const demoPairs = parseDemoCSV()
+      if (demoTripletIndex < demoPairs.length - 2) {
+        const refPair = demoPairs[demoTripletIndex]
+        const compA = demoPairs[demoTripletIndex + 1]
+        const compB = demoPairs[demoTripletIndex + 2]
+        
+        // Store the demo pair references with URLs
+        const demoTaskData = {
+          reference: refPair,
+          comparison_a: compA,
+          comparison_b: compB
+        }
+        
+        // @ts-ignore - Store demo data for video lookup
+        window._demoTripletData = demoTaskData
+        
+        setTask({
+          reference_id: `ref_${demoTripletIndex}`,
+          comparison_a_id: `comp_a_${demoTripletIndex}`,
+          comparison_b_id: `comp_b_${demoTripletIndex}`,
+          task_type: 'similarity',
+          pending_tasks: Math.floor((demoPairs.length - demoTripletIndex) / 3),
+          total_tasks: Math.floor(demoPairs.length / 3)
+        })
+        setDemoTripletIndex(prev => prev + 3)
+      } else {
+        setTask(null)
+      }
+      setLoading(false)
+      return
+    }
+    
     try {
       const data = await trainingApi.getNextTriplet()
       setTask(data)
@@ -42,6 +83,47 @@ export default function TripletComparison() {
     } finally {
       setLoading(false)
     }
+  }
+  
+  const enableDemoMode = async () => {
+    setDemoMode(true)
+    setDemoTripletIndex(0)
+    setShowDemo(false)
+    setLoading(true)
+    
+    // Create first demo task
+    const demoPairs = parseDemoCSV()
+    if (demoPairs.length >= 3) {
+      const refPair = demoPairs[0]
+      const compA = demoPairs[1]
+      const compB = demoPairs[2]
+      
+      const demoTaskData = {
+        reference: refPair,
+        comparison_a: compA,
+        comparison_b: compB
+      }
+      
+      // @ts-ignore
+      window._demoTripletData = demoTaskData
+      
+      setTask({
+        reference_id: 'ref_0',
+        comparison_a_id: 'comp_a_0',
+        comparison_b_id: 'comp_b_0',
+        task_type: 'similarity',
+        pending_tasks: Math.floor(demoPairs.length / 3),
+        total_tasks: Math.floor(demoPairs.length / 3)
+      })
+      setDemoTripletIndex(3)
+      
+      setStats({
+        completed_tasks: 0,
+        total_tasks: Math.floor(demoPairs.length / 3)
+      })
+    }
+    
+    setLoading(false)
   }
 
   const loadStats = async () => {
@@ -157,7 +239,7 @@ export default function TripletComparison() {
     )
   }
 
-  if (!task || task.pending_tasks === 0) {
+  if ((!task || task.pending_tasks === 0) && !showDemo && !demoMode) {
     return (
       <div className="text-center py-12">
         <div className="text-6xl mb-4">🎯</div>
@@ -165,17 +247,162 @@ export default function TripletComparison() {
         <p className="text-muted-foreground mb-8">
           You've completed all triplet comparisons. Great work!
         </p>
-        <button
-          onClick={() => navigate('/pairwise')}
-          className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-        >
-          Go to Pairwise Comparison
-        </button>
+        <div className="flex justify-center gap-4">
+          <button
+            onClick={() => navigate('/pairwise')}
+            className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+          >
+            Go to Pairwise Comparison
+          </button>
+          <button
+            onClick={enableDemoMode}
+            className="px-6 py-3 border border-primary text-primary rounded-lg hover:bg-primary/10"
+          >
+            Load Demo Data
+          </button>
+        </div>
       </div>
     )
   }
 
-  const questionText = task.task_type === 'similarity'
+  // Demo mode with mock data
+  if (showDemo && (!task || task.pending_tasks === 0)) {
+    const demoTask: TripletTask = {
+      reference_id: 'demo-ref',
+      comparison_a_id: 'demo-a',
+      comparison_b_id: 'demo-b',
+      task_type: 'similarity',
+      pending_tasks: 1,
+      total_tasks: 10
+    }
+    
+    return (
+      <div className="space-y-3 max-w-6xl mx-auto">
+        {/* Demo Banner */}
+        <div className="bg-warning/10 border border-warning/30 rounded-lg p-2">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-lg">👀</span>
+              <div>
+                <h3 className="font-semibold text-warning text-sm">Demo Preview Mode</h3>
+                <p className="text-xs text-muted-foreground">Preview of triplet comparison interface</p>
+              </div>
+            </div>
+            <button
+              onClick={() => setShowDemo(false)}
+              className="px-3 py-1.5 text-xs border border-border rounded-lg hover:bg-accent"
+            >
+              Exit Demo
+            </button>
+          </div>
+        </div>
+
+        {/* Header */}
+        <div className="flex justify-between items-center">
+          <div>
+            <h2 className="text-xl font-bold">Triplet Comparison</h2>
+            <p className="text-xs text-muted-foreground">Which cow walks MORE SIMILARLY to the reference?</p>
+          </div>
+          <div className="text-xs">
+            <span className="px-2 py-1 rounded-full text-xs font-medium bg-primary/10 text-primary">
+              🔗 Similarity Task
+            </span>
+          </div>
+        </div>
+
+        {/* Progress Bar */}
+        <div className="w-full bg-muted rounded-full h-1.5">
+          <div className="bg-primary h-1.5 rounded-full transition-all" style={{ width: '50%' }} />
+        </div>
+
+        {/* Video Grid - Reference Left, Comparisons Right */}
+        <div className="grid grid-cols-2 gap-3">
+          {/* Reference Video - Left Side */}
+          <div className="flex flex-col justify-center">
+            <div className="text-center mb-2">
+              <span className="inline-block px-2 py-1 bg-warning/20 text-warning rounded-full text-xs font-medium">
+                📍 Reference
+              </span>
+            </div>
+            <div className="border-3 border-warning rounded-lg overflow-hidden">
+              <div className="w-full aspect-video bg-black flex items-center justify-center">
+                <span className="text-white text-sm">Reference Video</span>
+              </div>
+            </div>
+          </div>
+
+          {/* Right Column - Comparisons A and B */}
+          <div className="flex flex-col gap-3">
+            {/* Comparison A - Upper Right */}
+            <div className="flex flex-col">
+              <div className="text-center mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Comparison A</span>
+              </div>
+              <div className="border-3 border-transparent hover:border-border rounded-lg overflow-hidden cursor-pointer transition-all">
+                <div className="w-full aspect-video bg-black flex items-center justify-center">
+                  <span className="text-white text-sm">Comparison A</span>
+                </div>
+              </div>
+              <div className="flex justify-center mt-1.5">
+                <button className="px-6 py-3 text-xs rounded-lg font-medium bg-blue-600 hover:bg-blue-700 text-white">
+                  Select A<br/>(Press 1)
+                </button>
+              </div>
+            </div>
+
+            {/* Comparison B - Lower Right */}
+            <div className="flex flex-col">
+              <div className="text-center mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Comparison B</span>
+              </div>
+              <div className="border-3 border-transparent hover:border-border rounded-lg overflow-hidden cursor-pointer transition-all">
+                <div className="w-full aspect-video bg-black flex items-center justify-center">
+                  <span className="text-white text-sm">Comparison B</span>
+                </div>
+              </div>
+              <div className="flex justify-center mt-1.5">
+                <button className="px-6 py-3 text-xs rounded-lg font-medium bg-blue-600 hover:bg-blue-700 text-white">
+                  Select B<br/>(Press 2)
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Playback Controls & Submit */}
+        <div className="flex justify-center items-center gap-3">
+          <button className="px-4 py-1.5 text-sm bg-primary text-primary-foreground rounded-lg hover:bg-primary/90">
+            ▶ Play All
+          </button>
+          <button className="px-4 py-1.5 text-sm border border-border rounded-lg hover:bg-accent">
+            ↺ Restart All
+          </button>
+          <button
+            disabled
+            className="px-5 py-1.5 text-sm bg-success text-white rounded-lg font-medium opacity-50 cursor-not-allowed"
+          >
+            Submit & Next
+          </button>
+        </div>
+
+        {/* Instructions */}
+        <div className="bg-muted/50 rounded-lg p-2 text-xs text-muted-foreground">
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <strong>How to Compare:</strong> Watch the Reference cow, then select which comparison (A or B) walks most similarly to it
+            </div>
+            <div className="text-right whitespace-nowrap">
+              <kbd className="px-1 bg-muted rounded text-[10px]">1/A</kbd> select A • 
+              <kbd className="px-1 bg-muted rounded text-[10px]">2/B</kbd> select B • 
+              <kbd className="px-1 bg-muted rounded text-[10px]">Space</kbd> play
+            </div>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  const questionText = task?.task_type === 'similarity'
     ? 'Which cow walks MORE SIMILARLY to the reference?'
     : 'Which cow walks MORE DIFFERENTLY from the reference?'
 
@@ -186,17 +413,34 @@ export default function TripletComparison() {
         <div>
           <h2 className="text-3xl font-bold">Triplet Comparison</h2>
           <p className="text-muted-foreground mt-1">
-            {task.task_type === 'similarity' 
+            {task?.task_type === 'similarity' 
               ? 'Select which cow walks most similarly to the reference'
               : 'Select which cow walks most differently from the reference'}
           </p>
+          {demoMode && (
+            <div className="mt-2">
+              <span className="px-3 py-1 bg-warning/20 text-warning rounded-full text-xs font-medium">
+                🎯 Demo Mode - Using demo_cows.csv data
+              </span>
+            </div>
+          )}
         </div>
-        {stats && (
-          <div className="text-sm text-muted-foreground">
-            Progress: {stats.completed_tasks} / {stats.total_tasks} tasks
-            ({((stats.completed_tasks / stats.total_tasks) * 100).toFixed(1)}%)
-          </div>
-        )}
+        <div className="flex items-center gap-3">
+          {!demoMode && !showDemo && (
+            <button
+              onClick={enableDemoMode}
+              className="px-3 py-1.5 text-sm border border-primary text-primary rounded-lg hover:bg-primary/10"
+            >
+              Load Demo Data
+            </button>
+          )}
+          {stats && (
+            <div className="text-sm text-muted-foreground">
+              Progress: {stats.completed_tasks} / {stats.total_tasks} tasks
+              ({((stats.completed_tasks / stats.total_tasks) * 100).toFixed(1)}%)
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Progress Bar */}
@@ -212,11 +456,11 @@ export default function TripletComparison() {
       {/* Task Type Badge */}
       <div className="flex justify-center">
         <span className={`px-4 py-2 rounded-full text-sm font-medium ${
-          task.task_type === 'similarity'
+          task?.task_type === 'similarity'
             ? 'bg-primary/10 text-primary'
             : 'bg-secondary text-secondary-foreground'
         }`}>
-          {task.task_type === 'similarity' ? '🔗 Similarity Task' : '↔️ Dissimilarity Task'}
+          {task?.task_type === 'similarity' ? '🔗 Similarity Task' : '↔️ Dissimilarity Task'}
         </span>
       </div>
 
@@ -237,10 +481,12 @@ export default function TripletComparison() {
           <div className="border-4 border-warning rounded-lg overflow-hidden">
             <video
               ref={refVideoRef}
-              src={videosApi.getStreamUrl(task.reference_id)}
+              src={demoMode ? ((window as any)._demoTripletData?.reference?.cow_L_URL || '') : task ? videosApi.getStreamUrl(task.reference_id) : ''}
               className="w-full aspect-video bg-black"
               loop
               muted
+              playsInline
+              controls
             />
           </div>
         </div>
@@ -260,10 +506,12 @@ export default function TripletComparison() {
           >
             <video
               ref={compAVideoRef}
-              src={videosApi.getStreamUrl(task.comparison_a_id)}
+              src={demoMode ? ((window as any)._demoTripletData?.comparison_a?.cow_L_URL || '') : task ? videosApi.getStreamUrl(task.comparison_a_id) : ''}
               className="w-full aspect-video bg-black"
               loop
               muted
+              playsInline
+              controls
             />
           </div>
           <div className="text-center mt-2">
@@ -300,10 +548,12 @@ export default function TripletComparison() {
           >
             <video
               ref={compBVideoRef}
-              src={videosApi.getStreamUrl(task.comparison_b_id)}
+              src={demoMode ? ((window as any)._demoTripletData?.comparison_b?.cow_L_URL || '') : task ? videosApi.getStreamUrl(task.comparison_b_id) : ''}
               className="w-full aspect-video bg-black"
               loop
               muted
+              playsInline
+              controls
             />
           </div>
           <div className="text-center mt-2">
@@ -324,16 +574,16 @@ export default function TripletComparison() {
       {/* Playback Controls */}
       <div className="flex justify-center gap-4">
         <button
-          onClick={restartVideos}
-          className="px-6 py-2 border border-border rounded-lg hover:bg-accent"
-        >
-          ↺ Restart All
-        </button>
-        <button
           onClick={togglePlayback}
           className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
         >
           {isPlaying ? '⏸ Pause' : '▶ Play All'}
+        </button>
+        <button
+          onClick={restartVideos}
+          className="px-6 py-2 border border-border rounded-lg hover:bg-accent"
+        >
+          ↺ Restart All
         </button>
       </div>
 
@@ -375,7 +625,7 @@ export default function TripletComparison() {
           <li>Watch the <strong>Reference cow</strong> carefully first</li>
           <li>Then compare both A and B to the reference</li>
           <li>
-            {task.task_type === 'similarity'
+            {task?.task_type === 'similarity'
               ? 'Select which cow walks most SIMILARLY to the reference'
               : 'Select which cow walks most DIFFERENTLY from the reference'}
           </li>

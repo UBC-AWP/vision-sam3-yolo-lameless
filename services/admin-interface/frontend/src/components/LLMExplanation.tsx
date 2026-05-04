@@ -46,6 +46,8 @@ interface LLMExplanationData {
 interface LLMExplanationProps {
   videoId: string
   className?: string
+  /** When provided, skip the API fetch and render this data directly (demo mode). */
+  overrideData?: LLMExplanationData
 }
 
 // Simple markdown to HTML converter for LLM output
@@ -67,9 +69,9 @@ function renderMarkdown(text: string): string {
     .replace(/\n/g, '<br/>')
 }
 
-export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
-  const [data, setData] = useState<LLMExplanationData | null>(null)
-  const [loading, setLoading] = useState(true)
+export function LLMExplanation({ videoId, className, overrideData }: LLMExplanationProps) {
+  const [data, setData] = useState<LLMExplanationData | null>(overrideData ?? null)
+  const [loading, setLoading] = useState(!overrideData)
   const [error, setError] = useState<string | null>(null)
   const [showPrompt, setShowPrompt] = useState(false)
 
@@ -92,10 +94,16 @@ export function LLMExplanation({ videoId, className }: LLMExplanationProps) {
   }
 
   useEffect(() => {
+    if (overrideData) {
+      setData(overrideData)
+      setLoading(false)
+      setError(null)
+      return
+    }
     if (videoId) {
       fetchExplanation()
     }
-  }, [videoId])
+  }, [videoId, overrideData])
 
   if (loading) {
     return (

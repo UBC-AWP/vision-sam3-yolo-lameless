@@ -26,6 +26,7 @@ import {
 } from 'lucide-react'
 import ShapExplanation from '@/components/ShapExplanation'
 import LLMExplanation from '@/components/LLMExplanation'
+import { getDemoCows } from '@/utils/demoData'
 
 const API_BASE = '/api'
 
@@ -67,6 +68,37 @@ export default function VideoResults() {
     setError(null)
 
     try {
+      // Check if this is a demo video
+      const demoCows = getDemoCows()
+      const demoCow = demoCows.find(c => c.id === videoId)
+      
+      if (demoCow) {
+        // Load demo data
+        setVideoInfo({
+          video_id: demoCow.id,
+          filename: `cow_${demoCow.id}_demo.mp4`,
+          file_size: 25 * 1024 * 1024,
+          stream_url: demoCow.videoUrl
+        })
+        
+        // Generate mock pipeline results
+        const score = demoCow.severity === 'severe' ? 0.9 : demoCow.severity === 'moderate' ? 0.7 : demoCow.severity === 'mild' ? 0.4 : 0.2
+        
+        setResults({
+          yolo: { status: 'success', data: { detections: 45, avg_confidence: 0.92 } },
+          sam3: { status: 'success', data: { segments: 12, quality_score: 0.88 } },
+          dinov3: { status: 'success', data: { embedding_quality: 0.91 } },
+          tleap: { status: 'success', data: { pose_score: score, keypoints_detected: 17 } },
+          tcn: { status: 'success', data: { temporal_score: score + 0.05 } },
+          transformer: { status: 'success', data: { attention_score: score - 0.05 } },
+          gnn: { status: 'success', data: { graph_score: score } },
+          ml: { status: 'success', data: { ensemble_score: score } },
+          fusion: { status: 'success', data: { final_score: score, prediction: demoCow.severity } }
+        })
+        setLoading(false)
+        return
+      }
+      
       // Load video info
       const videoResponse = await fetch(`${API_BASE}/videos/${videoId}`)
       if (videoResponse.ok) {

@@ -7,6 +7,9 @@ import {
   CowVideo 
 } from '@/api/client'
 import LLMExplanation from '@/components/LLMExplanation'
+import { getDemoCows } from '@/utils/demoData'
+import { getCowRankings, getConsensusData } from '@/utils/pairwiseConsensus'
+import { useAuth } from '@/contexts/AuthContext'
 
 interface CowDetails {
   id: string
@@ -25,6 +28,8 @@ interface CowDetails {
 }
 
 export default function CowDetail() {
+  const { user } = useAuth()
+  const useDemo = user?.id === 'guest' || user?.role === 'rater'
   const { cowId } = useParams<{ cowId: string }>()
   const [cow, setCow] = useState<CowDetails | null>(null)
   const [timeline, setTimeline] = useState<LamenessTimelineEntry[]>([])
@@ -33,7 +38,8 @@ export default function CowDetail() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<'timeline' | 'videos' | 'details'>('timeline')
-  const [daysRange, setDaysRange] = useState(30)
+  const [weeksRange, setWeeksRange] = useState(4)
+  const [demoExplanation, setDemoExplanation] = useState<any>(null)
   
   // Edit mode
   const [isEditing, setIsEditing] = useState(false)
@@ -44,17 +50,241 @@ export default function CowDetail() {
     if (cowId) {
       loadCowData()
     }
-  }, [cowId, daysRange])
+  }, [cowId, weeksRange])
 
   const loadCowData = async () => {
     if (!cowId) return
     
     try {
       setLoading(true)
+
+      // ── Check pairwise-ranked cows first (real CSV data) ──────────────────
+      const rankings = getCowRankings()
+      const ranking = rankings.find(r => r.cowId === cowId)
+
+      if (ranking) {
+        const consensus = getConsensusData()
+        // Collect pair-level data involving this cow for a pseudo-timeline
+        const now = Date.now()
+        const oneDay = 24 * 60 * 60 * 1000
+        const pairEntries: any[] = []
+        let pairIdx = 0
+        for (const [, pair] of consensus.entries()) {
+          if (pair.minCow !== cowId && pair.maxCow !== cowId) continue
+          // canonical mean: positive = maxCow more lame; flip for minCow
+          const rawMean = pair.maxCow === cowId ? pair.mean : -pair.mean
+          // Map to 0-1 (raw mean is -3..+3, but in practice smaller)
+          const score = Math.max(0, Math.min(1, (rawMean + 3) / 6))
+          pairEntries.push({
+            id: `pair-${pairIdx++}`,
+            video_id: cowId,
+            date: new Date(now - pairIdx * 3 * oneDay).toISOString(),
+            fusion_score: parseFloat(score.toFixed(3)),
+            pipeline_scores: {},
+            is_lame: score > 0.5,
+            severity_level: score >= 0.75 ? 'severe' : score >= 0.5 ? 'moderate' : score >= 0.25 ? 'mild' : 'healthy',
+            human_validated: true,
+            human_label: score > 0.5,
+            confidence: pair.agreePercent / 100,
+          })
+        }
+        pairEntries.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime())
+
+        const score = ranking.normalizedScore
+        setCow({
+          id: ranking.cowId,
+          cow_id: ranking.cowId,
+          tag_number: `#${ranking.cowId}`,
+          total_sightings: ranking.comparisons,
+          first_seen: null,
+          last_seen: null,
+          is_active: true,
+          notes: `Rank #${ranking.rank} — ${ranking.wins}W / ${ranking.losses}L / ${ranking.ties}T across ${ranking.comparisons} pairwise judgments`,
+          embedding_version: 'pairwise-consensus',
+          video_count: ranking.videoUrl ? 1 : 0,
+          lameness_record_count: pairEntries.length,
+          current_prediction: {
+            aggregated_score: score,
+            is_lame: score > 0.5,
+            confidence: 0.9,
+            severity_level: ranking.severity,
+            observation_date: new Date().toISOString(),
+            num_videos: ranking.videoUrl ? 1 : 0,
+          } as any,
+          last_prediction_update: new Date().toISOString(),
+        })
+        setTimeline(pairEntries as any)
+        setTrend(score > 0.5 ? 'worsening' : 'stable')
+        if (ranking.videoUrl) {
+          setVideos([{
+            video_id: ranking.cowId,
+            s3_url: ranking.videoUrl,
+            recorded_date: new Date().toISOString(),
+            lameness_score: score,
+            created_at: new Date().toISOString(),
+          } as any])
+        } else {
+          setVideos([])
+        }
+        setEditTag(`#${ranking.cowId}`)
+        setEditNotes(`Rank #${ranking.rank} — ${ranking.wins}W / ${ranking.losses}L / ${ranking.ties}T`)
+
+        const totalCows = rankings.length
+        const winPct = ranking.comparisons > 0
+          ? ((ranking.wins / ranking.comparisons) * 100).toFixed(0)
+          : '0'
+        const severityLabel = ranking.severity.charAt(0).toUpperCase() + ranking.severity.slice(1)
+        const isLame = score > 0.5
+
+        setDemoExplanation({
+          video_id: ranking.cowId,
+          explanation: `Cow ${ranking.cowId} is ranked **#${ranking.rank}** out of ${totalCows} cows based on ${ranking.comparisons} pairwise human judgments. Consensus lameness score: **${(score * 100).toFixed(0)}%** (${severityLabel}).`,
+          sections: {
+            executive_summary: `Cow **${ranking.cowId}** received a consensus lameness score of **${(score * 100).toFixed(0)}%**, placing it at rank **#${ranking.rank}** out of ${totalCows} cows. It was judged more lame in ${ranking.losses} out of ${ranking.comparisons} comparisons (win rate: ${winPct}%).`,
+            key_evidence: `- **${ranking.losses} losses** (judged more lame) vs **${ranking.wins} wins** (judged less lame)\n- **${ranking.ties} ties** (annotators could not decide)\n- Derived from **${ranking.comparisons} individual pairwise judgments** by human annotators\n- Severity category: **${severityLabel}** (normalized score ${(score * 100).toFixed(1)}%)`,
+            uncertainties: ranking.ties > 0
+              ? `${ranking.ties} comparisons ended in a tie, indicating some ambiguity in judging this cow's lameness relative to others. Scores are relative within this cohort of ${totalCows} cows.`
+              : `All comparisons produced a clear winner/loser verdict. Scores are relative within this cohort of ${totalCows} cows.`,
+            recommended_action: isLame
+              ? `**Veterinary review recommended.** Cow ${ranking.cowId} consistently ranks among the more lame animals in the herd. A physical gait assessment and possible hoof inspection are advised.`
+              : `**Continue routine monitoring.** Cow ${ranking.cowId} is among the healthier animals in pairwise comparisons. Maintain regular observation schedule.`,
+          },
+          llm_provider: 'pairwise-consensus',
+          llm_model: 'Human Annotators',
+          fusion_summary: {
+            prediction: isLame ? 'Lame' : 'Sound',
+            probability: score,
+            confidence: ranking.wins + ranking.losses > 0
+              ? ranking.losses / (ranking.wins + ranking.losses)
+              : 0.5,
+            decision_mode: 'human',
+          },
+        })
+
+        setError(null)
+        setLoading(false)
+        return
+      }
+
+      // ── Fallback: legacy demo_cows.csv ─────────────────────────────────────
+      const demoCows = getDemoCows()
+      const demoCow = demoCows.find(c => c.id === cowId)
+      
+      if (demoCow) {
+        // Load demo data
+        const tags = ['#A101', '#B205', '#C330', '#D412', '#E508']
+        const now = Date.now()
+        const oneDay = 24 * 60 * 60 * 1000
+        const daysAgo = Math.floor(Math.random() * 30)
+        
+        // Calculate score based on severity
+        let score = 0
+        if (demoCow.severity === 'healthy') score = 0.15
+        else if (demoCow.severity === 'mild') score = 0.4
+        else if (demoCow.severity === 'moderate') score = 0.65
+        else if (demoCow.severity === 'severe') score = 0.85
+        
+        setCow({
+          id: demoCow.id,
+          cow_id: demoCow.id,
+          tag_number: tags[Math.floor(Math.random() * tags.length)],
+          total_sightings: 15,
+          first_seen: new Date(now - 60 * oneDay).toISOString(),
+          last_seen: new Date(now - daysAgo * oneDay).toISOString(),
+          is_active: true,
+          notes: 'Demo cow from demo_cows.csv',
+          embedding_version: 'dinov3-base',
+          video_count: 3,
+          lameness_record_count: 3,
+          current_prediction: {
+            fusion_score: score,
+            aggregated_score: score, // Add for display in Lameness Score card
+            tleap_score: score + (Math.random() - 0.5) * 0.1,
+            tcn_score: score + (Math.random() - 0.5) * 0.1,
+            transformer_score: score + (Math.random() - 0.5) * 0.1,
+            is_lame: demoCow.severity === 'severe' || demoCow.severity === 'moderate',
+            confidence: 0.85,
+            severity_level: demoCow.severity,
+            observation_date: new Date(now - daysAgo * oneDay).toISOString()
+          } as any,
+          last_prediction_update: new Date(now - daysAgo * oneDay).toISOString()
+        })
+        
+        // Generate timeline (data points in weekly intervals)
+        const numDataPoints = Math.min(weeksRange, 10) // Up to 10 data points
+        const timelineEntries: LamenessTimelineEntry[] = Array.from({ length: numDataPoints }, (_, i) => {
+          // Generate realistic score progression
+          let weekScore = score
+          if (demoCow.severity === 'severe' || demoCow.severity === 'moderate') {
+            // Gradual worsening for lame cows
+            weekScore = score - (i * 0.03) + (Math.random() - 0.5) * 0.1
+          } else {
+            // Stable/slight improvement for healthy cows
+            weekScore = score + (Math.random() - 0.5) * 0.12
+          }
+          weekScore = Math.max(0, Math.min(1, weekScore)) // Clamp 0-1
+          
+          return {
+            id: `timeline-${i}`,
+            video_id: demoCow.id,
+            date: new Date(now - (i * 7 * oneDay)).toISOString(), // Weekly intervals
+            fusion_score: parseFloat(weekScore.toFixed(3)),
+            tleap_score: weekScore + (Math.random() - 0.5) * 0.08,
+            tcn_score: weekScore + (Math.random() - 0.5) * 0.08,
+            transformer_score: weekScore + (Math.random() - 0.5) * 0.08,
+            is_lame: weekScore > 0.5,
+            severity_level: weekScore > 0.75 ? 'severe' : weekScore > 0.5 ? 'moderate' : weekScore > 0.3 ? 'mild' : 'healthy',
+            human_validated: i === 0 || i === 3, // Mark some as validated
+            confidence: 0.75 + Math.random() * 0.2
+          } as any
+        }).reverse() // Oldest to newest for chart
+        setTimeline(timelineEntries)
+        setTrend(Math.random() > 0.5 ? 'stable' : 'improving')
+        
+        // Generate demo videos
+        setVideos([{
+          video_id: demoCow.id,
+          filename: `cow_${demoCow.id}_demo.mp4`,
+          s3_url: demoCow.videoUrl,
+          recorded_date: new Date(now - daysAgo * oneDay).toISOString(),
+          lameness_score: score,
+          created_at: new Date(now - daysAgo * oneDay).toISOString()
+        } as any])
+        
+        setEditTag(tags[Math.floor(Math.random() * tags.length)])
+        setEditNotes('Demo cow from demo_cows.csv')
+
+        const severityLabel = demoCow.severity.charAt(0).toUpperCase() + demoCow.severity.slice(1)
+        const isLame = demoCow.severity === 'severe' || demoCow.severity === 'moderate'
+        setDemoExplanation({
+          video_id: demoCow.id,
+          explanation: `Cow ${demoCow.id} has a **${severityLabel}** lameness severity based on expert annotation.`,
+          sections: {
+            executive_summary: `Cow **${demoCow.id}** has been assessed with **${severityLabel}** severity lameness. The lameness score is **${(score * 100).toFixed(0)}%**.`,
+            key_evidence: `- Severity category: **${severityLabel}**\n- Lameness score: **${(score * 100).toFixed(0)}%**\n- Annotation source: expert-labeled demo dataset`,
+            uncertainties: `This is demo data from a labeled dataset. Scores represent expert annotations rather than real-time AI inference.`,
+            recommended_action: isLame
+              ? `**Veterinary review recommended.** Cow ${demoCow.id} shows ${demoCow.severity} lameness. A physical gait assessment and possible hoof inspection are advised.`
+              : `**Continue routine monitoring.** Cow ${demoCow.id} shows ${demoCow.severity} lameness severity. Maintain regular observation schedule.`,
+          },
+          llm_provider: 'demo-annotation',
+          llm_model: 'Expert Annotator',
+          fusion_summary: {
+            prediction: isLame ? 'Lame' : 'Sound',
+            probability: score,
+            confidence: 0.85,
+            decision_mode: 'annotation',
+          },
+        })
+
+        setError(null)
+        setLoading(false)
+        return
+      }
       
       const [cowData, lamenessData, videosData] = await Promise.all([
         cowsApi.get(cowId),
-        cowsApi.getLameness(cowId, daysRange),
+        cowsApi.getLameness(cowId, weeksRange * 7), // Convert weeks to days for API
         cowsApi.getVideos(cowId, { limit: 50 })
       ])
       
@@ -196,16 +426,18 @@ export default function CowDetail() {
           </p>
         </div>
         
-        <button
-          onClick={() => setIsEditing(!isEditing)}
-          className="px-4 py-2 border rounded-lg hover:bg-accent transition-colors"
-        >
-          {isEditing ? 'Cancel' : '✏️ Edit'}
-        </button>
+        {!useDemo && (
+          <button
+            onClick={() => setIsEditing(!isEditing)}
+            className="px-4 py-2 border rounded-lg hover:bg-accent transition-colors"
+          >
+            {isEditing ? 'Cancel' : '✏️ Edit'}
+          </button>
+        )}
       </div>
 
       {/* Edit Form */}
-      {isEditing && (
+      {isEditing && !useDemo && (
         <div className="border border-border rounded-lg p-6 bg-muted/50">
           <h3 className="text-lg font-semibold mb-4">Edit Cow Details</h3>
           <div className="grid md:grid-cols-2 gap-4">
@@ -265,9 +497,9 @@ export default function CowDetail() {
           </div>
         </div>
 
-        {/* Lameness Score */}
+        {/* Health Score */}
         <div className="border border-border rounded-lg p-6 bg-card">
-          <p className="text-sm text-muted-foreground mb-2">Lameness Score</p>
+          <p className="text-sm text-muted-foreground mb-2">{useDemo ? 'Health Score' : 'Lameness Score'}</p>
           {prediction?.aggregated_score !== undefined ? (
             <>
               <p className="text-3xl font-bold">
@@ -291,59 +523,67 @@ export default function CowDetail() {
 
         {/* Trend */}
         <div className="border border-border rounded-lg p-6 bg-card">
-          <p className="text-sm text-muted-foreground mb-2">Trend ({daysRange}d)</p>
+          <p className="text-sm text-muted-foreground mb-2">Trend ({weeksRange} weeks)</p>
           <div className={`flex items-center gap-2 text-xl font-medium ${trendInfo.color}`}>
             <span className="text-2xl">{trendInfo.icon}</span>
             <span>{trendInfo.text}</span>
           </div>
         </div>
 
-        {/* Videos */}
-        <div className="border border-border rounded-lg p-6 bg-card">
-          <p className="text-sm text-muted-foreground mb-2">Total Videos</p>
-          <p className="text-3xl font-bold">{cow.video_count}</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            {cow.lameness_record_count} records
-          </p>
-        </div>
+        {/* Videos — only shown to admin/researcher */}
+        {!useDemo && (
+          <div className="border border-border rounded-lg p-6 bg-card">
+            <p className="text-sm text-muted-foreground mb-2">Total Videos</p>
+            <p className="text-3xl font-bold">{cow.video_count}</p>
+            <p className="text-sm text-muted-foreground mt-1">
+              {cow.lameness_record_count} records
+            </p>
+          </div>
+        )}
       </div>
 
-      {/* Dates Info */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
-        <div className="border border-border rounded-lg p-4 bg-card">
-          <span className="text-muted-foreground">First Seen:</span>
-          <span className="ml-2 font-medium">{formatShortDate(cow.first_seen)}</span>
-        </div>
-        <div className="border border-border rounded-lg p-4 bg-card">
-          <span className="text-muted-foreground">Last Seen:</span>
-          <span className="ml-2 font-medium">{formatShortDate(cow.last_seen)}</span>
-        </div>
-        <div className="border border-border rounded-lg p-4 bg-card">
-          <span className="text-muted-foreground">Total Sightings:</span>
-          <span className="ml-2 font-medium">{cow.total_sightings}</span>
-        </div>
-        <div className="border border-border rounded-lg p-4 bg-card">
-          <span className="text-muted-foreground">Confidence:</span>
-          <span className="ml-2 font-medium">
-            {prediction?.confidence ? `${(prediction.confidence * 100).toFixed(0)}%` : '—'}
-          </span>
-        </div>
-      </div>
-
-      {/* Latest AI Explanation */}
-      {videos.length > 0 && (
-        <div className="space-y-2">
-          <h3 className="text-lg font-semibold flex items-center gap-2">
-            🤖 Latest AI Analysis
-            <span className="text-sm font-normal text-muted-foreground">
-              from most recent video
+      {/* Dates Info — only shown to admin/researcher */}
+      {!useDemo && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <span className="text-muted-foreground">First Seen:</span>
+            <span className="ml-2 font-medium">{formatShortDate(cow.first_seen)}</span>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <span className="text-muted-foreground">Last Seen:</span>
+            <span className="ml-2 font-medium">{formatShortDate(cow.last_seen)}</span>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <span className="text-muted-foreground">Total Sightings:</span>
+            <span className="ml-2 font-medium">{cow.total_sightings}</span>
+          </div>
+          <div className="border border-border rounded-lg p-4 bg-card">
+            <span className="text-muted-foreground">Confidence:</span>
+            <span className="ml-2 font-medium">
+              {prediction?.confidence ? `${(prediction.confidence * 100).toFixed(0)}%` : '—'}
             </span>
-          </h3>
-          <LLMExplanation videoId={videos[0].video_id} />
+          </div>
         </div>
       )}
 
-      {/* Tabs */}
+      {/* Latest AI Explanation / Pairwise Summary */}
+      {(videos.length > 0 || demoExplanation) && (
+        <div className="space-y-2">
+          <h3 className="text-lg font-semibold flex items-center gap-2">
+            {demoExplanation ? '📊 Pairwise Consensus Summary' : '🤖 Latest AI Analysis'}
+            <span className="text-sm font-normal text-muted-foreground">
+              {demoExplanation ? 'derived from human annotations' : 'from most recent video'}
+            </span>
+          </h3>
+          <LLMExplanation
+            videoId={videos[0]?.video_id ?? cowId ?? ''}
+            overrideData={demoExplanation ?? undefined}
+          />
+        </div>
+      )}
+
+      {/* Tabs — hidden for rater/public view */}
+      {!useDemo && <>
       <div className="border-b">
         <div className="flex gap-4">
           {['timeline', 'videos', 'details'].map((tab) => (
@@ -371,14 +611,14 @@ export default function CowDetail() {
           <div className="flex justify-between items-center">
             <h3 className="text-lg font-semibold">Lameness Timeline</h3>
             <select
-              value={daysRange}
-              onChange={(e) => setDaysRange(Number(e.target.value))}
+              value={weeksRange}
+              onChange={(e) => setWeeksRange(Number(e.target.value))}
               className="px-3 py-1.5 border border-border rounded-lg text-sm bg-card text-foreground"
             >
-              <option value={7}>Last 7 days</option>
-              <option value={30}>Last 30 days</option>
-              <option value={90}>Last 90 days</option>
-              <option value={365}>Last year</option>
+              <option value={4}>Last 4 weeks</option>
+              <option value={10}>Last 10 weeks</option>
+              <option value={26}>Last 6 months</option>
+              <option value={52}>Last year</option>
             </select>
           </div>
 
@@ -386,7 +626,7 @@ export default function CowDetail() {
           {timeline.length > 0 && (
             <div className="border border-border rounded-lg p-6 bg-card">
               <div className="flex items-end gap-1 h-32 mb-4">
-                {timeline.slice(0, 30).reverse().map((entry, idx) => {
+                {timeline.slice(0, 30).map((entry, idx) => {
                   const score = entry.fusion_score ?? 0.5
                   return (
                     <div
@@ -427,10 +667,10 @@ export default function CowDetail() {
                 <thead className="bg-muted/50 border-b border-border">
                   <tr>
                     <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Date</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Video</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Score</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Severity</th>
-                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Validated</th>
+                    {!useDemo && <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Video</th>}
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">{useDemo ? 'Health Score' : 'Score'}</th>
+                    <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Status</th>
+                    {!useDemo && <th className="text-left py-3 px-4 text-sm font-medium text-muted-foreground">Validated</th>}
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-border">
@@ -439,14 +679,16 @@ export default function CowDetail() {
                       <td className="py-3 px-4 text-sm">
                         {formatDate(entry.date)}
                       </td>
-                      <td className="py-3 px-4">
-                        <Link 
-                          to={`/results/${entry.video_id}`}
-                          className="font-mono text-sm text-primary hover:underline"
-                        >
-                          {entry.video_id.slice(0, 8)}...
-                        </Link>
-                      </td>
+                      {!useDemo && (
+                        <td className="py-3 px-4">
+                          <Link 
+                            to={`/results/${entry.video_id}`}
+                            className="font-mono text-sm text-primary hover:underline"
+                          >
+                            {entry.video_id.slice(0, 8)}...
+                          </Link>
+                        </td>
+                      )}
                       <td className="py-3 px-4">
                         <div className="flex items-center gap-2">
                           <div className="w-12 bg-muted rounded-full h-2">
@@ -468,18 +710,26 @@ export default function CowDetail() {
                         <span className={`inline-flex px-2 py-1 rounded text-xs font-medium border ${
                           getSeverityColor(entry.severity_level)
                         }`}>
-                          {entry.severity_level || 'Unknown'}
+                          {useDemo
+                            ? (entry.severity_level === 'healthy' ? '✅ Healthy' :
+                               entry.severity_level === 'mild' ? '🟡 Mild' :
+                               entry.severity_level === 'moderate' ? '🟠 Moderate' :
+                               entry.severity_level === 'severe' ? '🔴 Lame' :
+                               'Unknown')
+                            : (entry.severity_level || 'Unknown')}
                         </span>
                       </td>
-                      <td className="py-3 px-4">
-                        {entry.human_validated ? (
-                          <span className="text-success">
-                            ✓ {entry.human_label ? 'Lame' : 'Sound'}
-                          </span>
-                        ) : (
-                          <span className="text-muted-foreground text-sm">Pending</span>
-                        )}
-                      </td>
+                      {!useDemo && (
+                        <td className="py-3 px-4">
+                          {entry.human_validated ? (
+                            <span className="text-success">
+                              ✓ {entry.human_label ? 'Lame' : 'Sound'}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground text-sm">Pending</span>
+                          )}
+                        </td>
+                      )}
                     </tr>
                   ))}
                 </tbody>
@@ -630,6 +880,7 @@ export default function CowDetail() {
           </div>
         </div>
       )}
+      </>}
     </div>
   )
 }

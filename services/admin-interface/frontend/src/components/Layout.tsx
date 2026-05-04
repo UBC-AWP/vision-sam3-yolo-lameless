@@ -7,6 +7,7 @@ import { useState, useEffect, useRef } from 'react'
 import { cn } from '@/lib/utils'
 import { useAuth } from '../contexts/AuthContext'
 import { useTheme, ThemeMode } from '../contexts/ThemeContext'
+import { useLanguage } from '../contexts/LanguageContext'
 import {
   User,
   LogOut,
@@ -40,7 +41,8 @@ import {
   Palette,
   Bell,
   Search,
-  Command
+  Command,
+  BarChart2,
 } from 'lucide-react'
 
 interface LayoutProps {
@@ -52,6 +54,7 @@ export default function Layout({ children }: LayoutProps) {
   const navigate = useNavigate()
   const { user, isAuthenticated, isLoading, logout, hasRole } = useAuth()
   const { theme, setTheme, themes, resolvedTheme } = useTheme()
+  const { language, setLanguage, t } = useLanguage()
   const [isUserMenuOpen, setIsUserMenuOpen] = useState(false)
   // Theme dropdown removed - now using direct cycle
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
@@ -91,22 +94,22 @@ export default function Layout({ children }: LayoutProps) {
     return () => window.removeEventListener('keydown', handleKeyDown)
   }, [])
 
-  const navItems = [
-    { path: '/', label: 'Dashboard', icon: Home, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/upload', label: 'Upload', icon: Upload, roles: ['admin', 'researcher'] },
-    { path: '/cows', label: 'Cow Registry', icon: Beef, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/pairwise', label: 'Pairwise', icon: GitCompare, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/triplet', label: 'Triplet', icon: Triangle, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/hierarchy', label: 'Hierarchy', icon: Network, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/similarity', label: 'Similarity', icon: Map, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/learn', label: 'Learn', icon: GraduationCap, roles: ['admin', 'researcher', 'rater'] },
-    { path: '/pipelines', label: 'Pipelines', icon: Activity, roles: ['admin', 'researcher'] },
-    { path: '/health', label: 'Health', icon: Heart, roles: ['admin', 'researcher'] },
-    { path: '/training', label: 'Queue', icon: ListTodo, roles: ['admin', 'researcher'] },
-    { path: '/config', label: 'ML Config', icon: Cpu, roles: ['admin', 'researcher'] },
-    { path: '/users', label: 'Users', icon: Users, roles: ['admin'] },
-    { path: '/tutorials', label: 'Tutorials', icon: BookOpen, roles: ['admin'] },
-  ]
+    const navItems = [
+      { path: '/dashboard', label: t('nav.dashboard'), icon: Home, roles: ['admin', 'researcher', 'rater'] },
+      { path: '/upload', label: 'Upload', icon: Upload, roles: ['admin', 'researcher'] },
+      { path: '/pairwise', label: t('nav.pairwise'), icon: GitCompare, roles: ['admin', 'researcher', 'rater'] },
+      { path: '/pairwise-tutorial', label: t('nav.pairwiseTutorial'), icon: BookOpen, roles: ['admin', 'researcher', 'rater'] },
+      { path: '/performance', label: t('nav.performance'), icon: Activity, roles: ['rater'] },
+      { path: '/pair-results', label: t('nav.pairResults'), icon: BarChart2, roles: ['admin', 'researcher', 'rater'] },
+      { path: '/hierarchy', label: t('nav.hierarchy'), icon: Network, roles: ['admin', 'researcher'] },
+      { path: '/similarity', label: t('nav.similarity'), icon: Map, roles: ['admin', 'researcher'] },
+      { path: '/pipelines', label: 'Pipelines', icon: Activity, roles: ['admin', 'researcher'] },
+      { path: '/health', label: 'Health', icon: Heart, roles: ['admin', 'researcher'] },
+      { path: '/training', label: 'Queue', icon: ListTodo, roles: ['admin', 'researcher'] },
+      { path: '/config', label: 'ML Config', icon: Cpu, roles: ['admin', 'researcher'] },
+      { path: '/users', label: 'Users', icon: Users, roles: ['admin'] },
+      { path: '/tutorials', label: 'Tutorials', icon: BookOpen, roles: ['admin'] },
+    ]
 
   const handleLogout = async () => {
     await logout()
@@ -136,8 +139,7 @@ export default function Layout({ children }: LayoutProps) {
   }
 
   const getThemeIcon = () => {
-    if (theme === 'system') return <Palette className="h-4 w-4" />
-    if (resolvedTheme === 'light') return <Sun className="h-4 w-4" />
+    if (theme === 'light') return <Sun className="h-4 w-4" />
     return <Moon className="h-4 w-4" />
   }
 
@@ -359,7 +361,7 @@ export default function Layout({ children }: LayoutProps) {
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-accent/50 transition-colors text-sm"
                     >
                       <Settings className="h-4 w-4 text-muted-foreground" />
-                      <span>Settings</span>
+                      <span>{t('common.settings')}</span>
                     </button>
                     <button
                       onClick={() => {
@@ -369,7 +371,7 @@ export default function Layout({ children }: LayoutProps) {
                       className="w-full flex items-center gap-3 px-3 py-2.5 rounded-lg hover:bg-destructive/10 text-destructive transition-colors text-sm"
                     >
                       <LogOut className="h-4 w-4" />
-                      <span>Sign out</span>
+                      <span>{t('common.logout')}</span>
                     </button>
                   </div>
                 </div>
@@ -405,7 +407,7 @@ export default function Layout({ children }: LayoutProps) {
               className="w-full flex items-center gap-3 px-4 py-2 rounded-xl bg-muted/50 hover:bg-muted text-muted-foreground text-sm transition-colors"
             >
               <Search className="h-4 w-4" />
-              <span>Search...</span>
+              <span>{t('common.search')}</span>
               <kbd className="ml-auto hidden md:inline-flex h-5 select-none items-center gap-1 rounded border border-border bg-background px-1.5 font-mono text-[10px] font-medium text-muted-foreground">
                 <span className="text-xs">⌘</span>K
               </kbd>
@@ -416,17 +418,22 @@ export default function Layout({ children }: LayoutProps) {
 
           {/* Right side actions */}
           <div className="flex items-center gap-2">
-            {/* Theme toggle - cycles through themes on click */}
+            {/* Language toggle - EN/FR */}
+            <button
+              onClick={() => setLanguage(language === 'en' ? 'fr' : 'en')}
+              className="px-3 py-1.5 rounded-xl hover:bg-accent/50 transition-colors text-xs font-medium"
+              title="Toggle language"
+            >
+              {language === 'en' ? 'EN' : 'FR'}
+            </button>
+
+            {/* Theme toggle - cycles between light and dark */}
             <button
               onClick={() => {
-                // Cycle to next theme
-                const themeOrder: ThemeMode[] = ['light', 'dark', 'midnight', 'ocean', 'forest', 'sunset']
-                const currentIndex = themeOrder.indexOf(theme === 'system' ? 'dark' : theme)
-                const nextIndex = (currentIndex + 1) % themeOrder.length
-                setTheme(themeOrder[nextIndex])
+                setTheme(theme === 'light' ? 'dark' : 'light')
               }}
               className="p-2.5 rounded-xl hover:bg-accent/50 transition-colors"
-              title={`Current: ${themes.find(t => t.value === theme)?.label || 'System'} - Click to change`}
+              title={`Current: ${theme === 'light' ? 'Light' : 'Dark'} - Click to toggle`}
             >
               {getThemeIcon()}
             </button>
@@ -477,7 +484,7 @@ export default function Layout({ children }: LayoutProps) {
                   type="text"
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search pages, cows, videos..."
+                  placeholder={t('common.search')}
                   className="flex-1 bg-transparent border-none outline-none text-foreground placeholder:text-muted-foreground"
                   autoFocus
                 />
@@ -491,7 +498,7 @@ export default function Layout({ children }: LayoutProps) {
               <div className="p-2 max-h-80 overflow-y-auto">
                 {/* Quick links */}
                 <p className="px-3 py-2 text-xs font-semibold text-muted-foreground uppercase tracking-wider">
-                  Quick Links
+                  {t('common.quickLinks')}
                 </p>
                 {navItems
                   .filter(item => hasRole(item.roles))

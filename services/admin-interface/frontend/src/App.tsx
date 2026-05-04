@@ -1,8 +1,10 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom'
 import { AuthProvider } from './contexts/AuthContext'
 import { ThemeProvider } from './contexts/ThemeContext'
+import { LanguageProvider } from './contexts/LanguageContext'
 import { ProtectedRoute, ResearcherRoute, AdminRoute } from './components/ProtectedRoute'
 import Layout from './components/Layout'
+import HomeRedirect from './pages/HomeRedirect'
 import Dashboard from './pages/Dashboard'
 import VideoUpload from './pages/VideoUpload'
 import VideoAnalysis from './pages/VideoAnalysis'
@@ -12,6 +14,9 @@ import TripletComparison from './pages/TripletComparison'
 import HierarchyVisualization from './pages/HierarchyVisualization'
 import SimilarityMap from './pages/SimilarityMap'
 import TrainingModule from './pages/TrainingModule'
+import Performance from './pages/Performance'
+import PairwiseResults from './pages/PairwiseResults'
+import PairwiseTutorial from './pages/PairwiseTutorial'
 import Login from './pages/Login'
 import PipelineMonitor from './pages/PipelineMonitor'
 import SystemHealth from './pages/SystemHealth'
@@ -27,8 +32,9 @@ import CowDetail from './pages/CowDetail'
 function App() {
   return (
     <ThemeProvider>
-      <AuthProvider>
-        <Router>
+      <LanguageProvider>
+        <AuthProvider>
+          <Router>
           <Routes>
             {/* Public route */}
             <Route path="/login" element={<Login />} />
@@ -39,8 +45,9 @@ function App() {
               element={
                 <Layout>
                   <Routes>
-                    {/* Dashboard - accessible to all authenticated users */}
-                    <Route path="/" element={<Dashboard />} />
+                    {/* Home route - role-aware landing */}
+                    <Route path="/" element={<HomeRedirect />} />
+                    <Route path="/dashboard" element={<Dashboard />} />
 
                     {/* Video management - researcher and above */}
                     <Route
@@ -65,12 +72,15 @@ function App() {
 
                     {/* Human-in-the-loop - all authenticated users */}
                     <Route path="/pairwise" element={<PairwiseReview />} />
+                    <Route path="/pairwise-tutorial" element={<PairwiseTutorial />} />
                     <Route path="/triplet" element={<TripletComparison />} />
                     <Route path="/compare/:videoId1/:videoId2" element={<PairwiseReview />} />
 
                     {/* Analytics - all authenticated users */}
                     <Route path="/hierarchy" element={<HierarchyVisualization />} />
                     <Route path="/similarity" element={<SimilarityMap />} />
+                    <Route path="/performance" element={<Performance />} />
+                    <Route path="/pair-results" element={<PairwiseResults />} />
                     <Route path="/learn" element={<TrainingModule />} />
 
                     {/* Cow Registry - all authenticated users */}
@@ -138,8 +148,9 @@ function App() {
               }
             />
           </Routes>
-        </Router>
-      </AuthProvider>
+          </Router>
+        </AuthProvider>
+      </LanguageProvider>
     </ThemeProvider>
   )
 }

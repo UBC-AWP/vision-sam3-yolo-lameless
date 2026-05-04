@@ -1,6 +1,83 @@
 import { useEffect, useState, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { videosApi, eloRankingApi, tutorialApi, TutorialExample } from '@/api/client'
+import { useLanguage } from '@/contexts/LanguageContext'
+import { useAuth } from '@/contexts/AuthContext'
+import { cn } from '@/lib/utils'
+import { getRandomDemoPair, parseDemoCSV, resetDemoCache, type DemoPair } from '@/utils/demoData'
+import {
+  getValidDemoPairs,
+  type DemoConsensusPair,
+} from '@/utils/pairwiseConsensus'
+
+// ── Task definitions ─────────────────────────────────────────────────────────
+interface PairwiseTask {
+  id: number
+  name: string
+  description: string
+  pairCount: number
+  completedPeople: number
+  requiredPeople: number
+  color: string
+  bgColor: string
+  textColor: string
+  borderColor: string
+}
+
+const PAIRWISE_TASKS: PairwiseTask[] = [
+  {
+    id: 1,
+    name: 'UBC Farm 1',
+    description: 'Morning session — Spring 2021',
+    pairCount: 10,
+    completedPeople: 13,
+    requiredPeople: 20,
+    color: 'from-blue-500 to-blue-600',
+    bgColor: 'bg-blue-500/10',
+    textColor: 'text-blue-500',
+    borderColor: 'border-blue-500/30',
+  },
+  {
+    id: 2,
+    name: 'UBC Farm 2',
+    description: 'Afternoon session — Spring 2021',
+    pairCount: 10,
+    completedPeople: 8,
+    requiredPeople: 20,
+    color: 'from-violet-500 to-violet-600',
+    bgColor: 'bg-violet-500/10',
+    textColor: 'text-violet-500',
+    borderColor: 'border-violet-500/30',
+  },
+  {
+    id: 3,
+    name: 'UBC Farm 3',
+    description: 'Evening rounds — Summer 2021',
+    pairCount: 10,
+    completedPeople: 5,
+    requiredPeople: 20,
+    color: 'from-amber-500 to-amber-600',
+    bgColor: 'bg-amber-500/10',
+    textColor: 'text-amber-500',
+    borderColor: 'border-amber-500/30',
+  },
+  {
+    id: 4,
+    name: 'UBC Farm 4',
+    description: 'Expert validation — Fall 2021',
+    pairCount: 10,
+    completedPeople: 2,
+    requiredPeople: 20,
+    color: 'from-rose-500 to-rose-600',
+    bgColor: 'bg-rose-500/10',
+    textColor: 'text-rose-500',
+    borderColor: 'border-rose-500/30',
+  },
+]
+
+// Evenly spread 4 tasks across all 435 pairs (435 / 4 ≈ 108 apart)
+// Task k starts at k * floor(totalPairs / numTasks)
+const TASK_OFFSETS = [0, 108, 217, 326]
 
 interface VideoPair {
   video_id_1: string
@@ -24,6 +101,13 @@ const COMPARISON_SCALE = [
 
 export default function PairwiseReview() {
   const navigate = useNavigate()
+  const { t } = useLanguage()
+  const { user } = useAuth()
+  const useDemo = user?.id === 'guest' || user?.role === 'rater'
+
+  // Task selection (for rater/demo users)
+  const [selectedTask, setSelectedTask] = useState<PairwiseTask | null>(null)
+
   const [pair, setPair] = useState<VideoPair | null>(null)
   const [stats, setStats] = useState<any>(null)
   const [ranking, setRanking] = useState<any>(null)
@@ -47,8 +131,22 @@ export default function PairwiseReview() {
   const video1Ref = useRef<HTMLVideoElement>(null)
   const video2Ref = useRef<HTMLVideoElement>(null)
   const [isPlaying, setIsPlaying] = useState(false)
+  
+  // Demo mode
+  const [demoMode, setDemoMode] = useState(false)
+  const [demoPair, setDemoPair] = useState<DemoConsensusPair | null>(null)
+  const [demoIndex, setDemoIndex] = useState(0)
+  const [demoPairs, setDemoPairs] = useState<DemoConsensusPair[]>([])
+  const [showDemoComplete, setShowDemoComplete] = useState(false)
 
   useEffect(() => {
+    if (useDemo) {
+      // Rater / demo users skip tutorial & live API calls — show task selection
+      setInTutorial(false)
+      setTutorialLoading(false)
+      setLoading(false)
+      return
+    }
     // Check if user has completed tutorial
     const tutorialComplete = localStorage.getItem('pairwise_tutorial_complete')
     if (tutorialComplete === 'true') {
@@ -60,7 +158,7 @@ export default function PairwiseReview() {
       loadTutorialExamples()
     }
     loadStats()
-  }, [])
+  }, [useDemo])
 
   const loadTutorialExamples = async () => {
     setTutorialLoading(true)
@@ -87,7 +185,19 @@ export default function PairwiseReview() {
   const loadNextPair = async () => {
     setLoading(true)
     setSelectedValue(null)
-    setIsPlaying(false)
+    setIsPlaying(demoMode) // Auto-playing in demo mode
+    
+    if (demoMode) {
+      // Load next demo pair (max 3 pairs)
+      const nextIndex = demoIndex + 1
+      if (nextIndex < demoPairs.length) {
+        setDemoPair(demoPairs[nextIndex])
+        setDemoIndex(nextIndex)
+      }
+      setLoading(false)
+      return
+    }
+    
     try {
       // Use Elo API for intelligent pair selection
       const data = await eloRankingApi.getNextPair()
@@ -97,6 +207,83 @@ export default function PairwiseReview() {
     } finally {
       setLoading(false)
     }
+  }
+  
+  const enableDemoMode = () => {
+    setDemoMode(true)
+    setInTutorial(false)
+    setTutorialLoading(false)
+    localStorage.setItem('pairwise_tutorial_complete', 'true')
+
+    // Use local video pairs + CSV consensus data
+    const allPairs = getValidDemoPairs()
+
+    // Shuffle for variety; fall back to legacy S3 pairs if no local videos found
+    if (allPairs.length === 0) {
+      resetDemoCache()
+      const legacyAll = parseDemoCSV()
+      // Legacy pairs don't have consensusData; wrap them minimally
+      // (feedback won't fire for these but UI still works)
+      setDemoPairs([])
+      setDemoPair(null)
+      setDemoIndex(0)
+      setShowDemoComplete(false)
+      setIsPlaying(true)
+      setLoading(false)
+      return
+    }
+
+    const shuffled = [...allPairs].sort(() => Math.random() - 0.5)
+
+    setDemoPairs(shuffled)
+    setDemoPair(shuffled[0])
+    setDemoIndex(0)
+    setShowDemoComplete(false)
+    setIsPlaying(true)
+    setLoading(false)
+  }
+
+  const handleTaskSelect = (task: PairwiseTask) => {
+    const allPairs = getValidDemoPairs()
+    if (allPairs.length === 0) return
+
+    const offset = TASK_OFFSETS[task.id - 1]
+    const taskPairs: DemoConsensusPair[] = []
+    for (let i = 0; i < task.pairCount; i++) {
+      const pair = allPairs[(offset + i) % allPairs.length]
+      // Randomly assign which cow appears on the left (matching the original study)
+      const flipped = Math.random() < 0.5
+      taskPairs.push(flipped ? {
+        ...pair,
+        cow_L: pair.cow_R,
+        cow_R: pair.cow_L,
+        cow_L_URL: pair.cow_R_URL,
+        cow_R_URL: pair.cow_L_URL,
+      } : pair)
+    }
+
+    setSelectedTask(task)
+    setDemoMode(true)
+    setInTutorial(false)
+    setTutorialLoading(false)
+    localStorage.setItem('pairwise_tutorial_complete', 'true')
+    setDemoPairs(taskPairs)
+    setDemoPair(taskPairs[0])
+    setDemoIndex(0)
+    setShowDemoComplete(false)
+    setIsPlaying(true)
+    setLoading(false)
+  }
+
+  const handleBackToTasks = () => {
+    setSelectedTask(null)
+    setDemoMode(false)
+    setDemoPairs([])
+    setDemoPair(null)
+    setDemoIndex(0)
+    setShowDemoComplete(false)
+    setIsPlaying(false)
+    setLoading(false)
   }
 
   const loadStats = async () => {
@@ -141,9 +328,25 @@ export default function PairwiseReview() {
   }
 
   const handleSubmit = async () => {
-    if (!pair || selectedValue === null) return
+    if ((!pair && !demoMode) || selectedValue === null) return
 
     setSubmitting(true)
+    
+    if (demoMode && demoPair) {
+      const isLastPair = demoIndex === demoPairs.length - 1
+      if (isLastPair) {
+        setShowDemoComplete(true)
+      } else {
+        const nextIndex = demoIndex + 1
+        setDemoPair(demoPairs[nextIndex])
+        setDemoIndex(nextIndex)
+        setSelectedValue(null)
+        setIsPlaying(true)
+      }
+      setSubmitting(false)
+      return
+    }
+    
     try {
       // Convert 7-point scale to winner format and degree for Elo API
       let winner: number
@@ -168,8 +371,8 @@ export default function PairwiseReview() {
 
       // Submit to Elo ranking system with degree of preference
       await eloRankingApi.submitComparison(
-        pair.video_id_1,
-        pair.video_id_2,
+        pair!.video_id_1,
+        pair!.video_id_2,
         winner,
         degree,
         confidence,
@@ -223,7 +426,7 @@ export default function PairwiseReview() {
 
     video1.addEventListener('timeupdate', syncPlayback)
     return () => video1.removeEventListener('timeupdate', syncPlayback)
-  }, [pair])
+  }, [pair, demoPair])
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -267,6 +470,119 @@ export default function PairwiseReview() {
     const url = `${window.location.origin}/compare/${pair.video_id_1}/${pair.video_id_2}`
     setShareUrl(url)
     setShowShareModal(true)
+  }
+
+  // ── Task Selection Screen (rater / demo users) ───────────────────────────
+  if (useDemo && !selectedTask && !demoMode) {
+    const completedTaskIds: number[] = JSON.parse(
+      localStorage.getItem('pairwise_completed_tasks') ?? '[]'
+    )
+    return (
+      <div className="max-w-4xl mx-auto space-y-8 animate-fade-in">
+        {/* Header */}
+        <div className="text-center">
+          <h1 className="text-3xl font-bold mb-2">{t('pairwise.tasksTitle')}</h1>
+          <p className="text-muted-foreground whitespace-nowrap">
+            {t('pairwise.tasksSubtitle')}
+          </p>
+          <div className="mt-4 flex items-center justify-center gap-2 flex-wrap">
+            <span className="text-sm text-muted-foreground">{t('pairwise.notSure')}</span>
+            <button
+              onClick={() => navigate('/pairwise-tutorial')}
+              className="px-3 py-1.5 rounded-lg border border-primary text-primary text-sm font-medium hover:bg-primary/10 transition-colors"
+            >
+              {t('pairwise.clickTutorial')}
+            </button>
+          </div>
+        </div>
+
+        {/* Task Cards */}
+        <div className="grid sm:grid-cols-2 gap-5">
+          {PAIRWISE_TASKS.map((task, i) => {
+            const isCompleted = completedTaskIds.includes(task.id)
+            const progressPct = Math.round((task.completedPeople / task.requiredPeople) * 100)
+            return (
+              <div
+                key={task.id}
+                className={cn(
+                  "relative rounded-2xl border bg-card p-6 flex flex-col gap-4 cursor-pointer",
+                  "transition-all duration-200 hover:shadow-xl hover:-translate-y-0.5 hover:border-primary/40",
+                  "animate-slide-in-up",
+                  isCompleted ? "border-emerald-500/40" : "border-border"
+                )}
+                style={{ animationDelay: `${i * 0.08}s`, animationFillMode: 'backwards' }}
+                onClick={() => handleTaskSelect(task)}
+              >
+                {/* Completed badge */}
+                {isCompleted && (
+                  <div className="absolute top-4 right-4 flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/15 text-emerald-500 text-xs font-medium">
+                    ✓ {t('pairwise.completed')}
+                  </div>
+                )}
+
+                {/* Title row */}
+                <div className="flex items-start gap-4">
+                  <div className={cn(
+                    "w-12 h-12 rounded-xl flex items-center justify-center shrink-0 bg-gradient-to-br",
+                    task.color
+                  )}>
+                    <span className="text-xl text-white font-bold">{task.id}</span>
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-bold">{task.name}</h3>
+                    <p className="text-sm text-muted-foreground">{task.description}</p>
+                  </div>
+                </div>
+
+                {/* Stats row */}
+                <div className="flex items-center gap-3">
+                  <span className={cn(
+                    "px-2.5 py-1 rounded-lg text-xs font-semibold",
+                    task.bgColor, task.textColor
+                  )}>
+                    {task.pairCount} {t('pairwise.pairs')}
+                  </span>
+                  <span className="text-xs text-muted-foreground">·</span>
+                  <span className="text-xs text-muted-foreground">
+                    {task.completedPeople}/{task.requiredPeople} {t('pairwise.ratersCompleted')}
+                  </span>
+                </div>
+
+                {/* Progress bar */}
+                <div>
+                  <div className="flex justify-between text-xs text-muted-foreground mb-1.5">
+                    <span>{t('pairwise.completion')}</span>
+                    <span className="font-medium text-foreground">{progressPct}%</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-muted overflow-hidden">
+                    <div
+                      className={cn("h-full rounded-full bg-gradient-to-r transition-all duration-700", task.color)}
+                      style={{ width: `${progressPct}%` }}
+                    />
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1.5">
+                    {task.completedPeople}/{task.requiredPeople} people have completed this task
+                  </p>
+                </div>
+
+                {/* CTA */}
+                <button
+                  className={cn(
+                    "mt-auto w-full py-2.5 rounded-xl font-medium text-sm transition-colors",
+                    isCompleted
+                      ? "bg-emerald-500/15 text-emerald-500 hover:bg-emerald-500/25"
+                      : "bg-primary text-primary-foreground hover:bg-primary/90"
+                  )}
+                  onClick={(e) => { e.stopPropagation(); handleTaskSelect(task) }}
+                >
+                  {isCompleted ? t('pairwise.redoTask') : t('pairwise.startTaskArrow')}
+                </button>
+              </div>
+            )
+          })}
+        </div>
+      </div>
+    )
   }
 
   // Tutorial UI
@@ -315,7 +631,7 @@ export default function PairwiseReview() {
           {/* Tutorial videos - actual videos from API */}
           <div className="grid grid-cols-2 gap-4 my-6">
             <div className="space-y-2">
-              <div className="text-center font-medium text-muted-foreground">Video A</div>
+              <div className="text-center font-medium text-muted-foreground">Left Cow</div>
               <div className="aspect-video bg-black rounded-lg overflow-hidden">
                 <video
                   src={videosApi.getStreamUrl(currentExample.video_id_1)}
@@ -328,7 +644,7 @@ export default function PairwiseReview() {
               </div>
             </div>
             <div className="space-y-2">
-              <div className="text-center font-medium text-muted-foreground">Video B</div>
+              <div className="text-center font-medium text-muted-foreground">Right Cow</div>
               <div className="aspect-video bg-black rounded-lg overflow-hidden">
                 <video
                   src={videosApi.getStreamUrl(currentExample.video_id_2)}
@@ -342,25 +658,52 @@ export default function PairwiseReview() {
             </div>
           </div>
 
-          {/* 7-Point Scale */}
-          <div className="space-y-3">
-            <label className="block text-sm font-medium text-muted-foreground">
-              Select your comparison (1-7 keys work too):
+          {/* 7-Point Scale - Circular Buttons */}
+          <div className="space-y-2">
+            <label className="block text-center font-medium text-muted-foreground text-sm">
+              Select the option that best describes the lameness difference
             </label>
-            <div className="flex gap-2 flex-wrap justify-center">
-              {COMPARISON_SCALE.map((option, idx) => (
-                <button
-                  key={option.value}
-                  onClick={() => setSelectedValue(option.value)}
-                  className={`px-3 py-2 rounded-lg text-sm font-medium transition-all ${
-                    selectedValue === option.value
-                      ? `${option.color} text-white ring-2 ring-offset-2 ring-primary`
-                      : 'bg-muted hover:bg-accent text-foreground'
-                  }`}
-                >
-                  <span className="text-xs opacity-60">{idx + 1}</span> {option.label}
-                </button>
-              ))}
+            <div className="flex items-center justify-center gap-8 py-3">
+              {COMPARISON_SCALE.map((option, idx) => {
+                // Smaller sizes
+                const sizeClass = 
+                  idx === 0 || idx === 6 ? 'w-12 h-12' :  // Large outer
+                  idx === 1 || idx === 5 ? 'w-10 h-10' :  // Medium-large
+                  idx === 2 || idx === 4 ? 'w-9 h-9' :    // Medium
+                  'w-7 h-7';                               // Small (center)
+                
+                // Softer, less bright colors
+                const colorClass = 
+                  selectedValue === option.value
+                    ? option.value < 0 ? 'bg-blue-600 border-blue-700' :
+                      option.value > 0 ? 'bg-orange-600 border-orange-700' :
+                      'bg-gray-500 border-gray-600'
+                    : option.value < 0 ? 'bg-blue-500/50 hover:bg-blue-500/70 border-blue-500/60' :
+                      option.value > 0 ? 'bg-orange-500/50 hover:bg-orange-500/70 border-orange-500/60' :
+                      'bg-gray-400/40 hover:bg-gray-400/60 border-gray-400/50';
+
+                // Text label for outer buttons
+                const showText = idx === 0 || idx === 6;
+                const labelText = idx === 0 ? 'Left more lame' : idx === 6 ? 'Right more lame' : '';
+
+                return (
+                  <div key={option.value} className="flex flex-col items-center gap-1 flex-shrink-0">
+                    <span className={`text-[10px] mb-0.5 h-3 ${showText ? 'text-muted-foreground' : 'invisible'}`}>
+                      {showText ? labelText : 'placeholder'}
+                    </span>
+                    <button
+                      onClick={() => setSelectedValue(option.value)}
+                      className={`rounded-full ${sizeClass} ${colorClass} border-2 transition-all flex-shrink-0 ${
+                        selectedValue === option.value ? 'ring-2 ring-offset-2 ring-primary scale-110' : ''
+                      }`}
+                      title={option.label}
+                      style={{ aspectRatio: '1 / 1' }}
+                    >
+                      <span className="sr-only">{option.label}</span>
+                    </button>
+                  </div>
+                )
+              })}
             </div>
           </div>
 
@@ -400,7 +743,7 @@ export default function PairwiseReview() {
         </div>
 
         <div className="flex justify-between items-center text-sm text-muted-foreground">
-          <div>Score: {tutorialScore}/{tutorialStep + (showTutorialFeedback ? 1 : 0)}</div>
+          <div>{t('tutorial.score')} {tutorialScore}/{tutorialStep + (showTutorialFeedback ? 1 : 0)}</div>
           <button
             onClick={() => {
               localStorage.setItem('pairwise_tutorial_complete', 'true')
@@ -409,7 +752,7 @@ export default function PairwiseReview() {
             }}
             className="text-primary hover:text-primary/80 underline"
           >
-            Skip Tutorial
+            {t('pairwise.skipTutorial')}
           </button>
         </div>
       </div>
@@ -421,69 +764,154 @@ export default function PairwiseReview() {
       <div className="flex items-center justify-center h-64">
         <div className="text-center">
           <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mx-auto mb-4"></div>
-          <div className="text-muted-foreground">Loading video pair...</div>
+          <div className="text-muted-foreground">{t('pairwise.loading')}</div>
         </div>
       </div>
     )
   }
 
-  if (pair?.status === 'all_completed') {
+  if (showDemoComplete) {
+    // Mark this task as completed in localStorage
+    if (selectedTask) {
+      const completed: number[] = JSON.parse(
+        localStorage.getItem('pairwise_completed_tasks') ?? '[]'
+      )
+      if (!completed.includes(selectedTask.id)) {
+        localStorage.setItem('pairwise_completed_tasks', JSON.stringify([...completed, selectedTask.id]))
+      }
+    }
+
+    return (
+      <div className="text-center py-12 relative">
+        {/* Confetti effect */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          {[...Array(50)].map((_, i) => (
+            <div
+              key={i}
+              className="absolute animate-confetti"
+              style={{
+                left: `${Math.random() * 100}%`,
+                top: `-20px`,
+                animationDelay: `${Math.random() * 2}s`,
+                animationDuration: `${2 + Math.random() * 2}s`
+              }}
+            >
+              {['🎉', '🎊', '✨', '⭐', '🌟'][Math.floor(Math.random() * 5)]}
+            </div>
+          ))}
+        </div>
+        
+        <div className="relative z-10">
+          <div className="text-6xl mb-4 animate-bounce">🎉</div>
+          <h2 className="text-3xl font-bold mb-4">{t('pairwise.taskComplete')}</h2>
+          <p className="text-muted-foreground mb-2">
+            {t('pairwise.finishedAll')} {selectedTask?.pairCount ?? demoPairs.length} {t('pairwise.comparisons')}
+            {selectedTask ? ` ${t('pairwise.comparisonsFor')} ${selectedTask.name}` : ''}.
+          </p>
+          <p className="text-muted-foreground mb-8">{t('pairwise.allCompleteMsg')}</p>
+          <div className="flex gap-4 justify-center flex-wrap">
+            <button
+              onClick={() => {
+                setShowDemoComplete(false)
+                setDemoMode(false)
+                setDemoIndex(0)
+                setDemoPairs([])
+                setDemoPair(null)
+                setSelectedTask(null)
+              }}
+              className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+            >
+              {t('pairwise.returnToMainPage')}
+            </button>
+          </div>
+        </div>
+      </div>
+    )
+  }
+
+  if (pair?.status === 'all_completed' && !demoMode) {
     return (
       <div className="text-center py-12">
         <div className="text-6xl mb-4">🎉</div>
-        <h2 className="text-3xl font-bold mb-4">All Comparisons Complete!</h2>
+        <h2 className="text-3xl font-bold mb-4">{t('pairwise.allComplete')}</h2>
         <p className="text-muted-foreground mb-8">
-          You've completed all {pair.total_pairs} pairwise comparisons.
+          {t('pairwise.allCompleteMsg')}
         </p>
-        <button
-          onClick={() => setShowRanking(true)}
-          className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
-        >
-          View Lameness Ranking
-        </button>
+        <div className="flex gap-4 justify-center">
+          <button
+            onClick={() => setShowRanking(true)}
+            className="px-6 py-3 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+          >
+            {t('pairwise.showRanking')}
+          </button>
+          <button
+            onClick={enableDemoMode}
+            className="px-6 py-3 border border-primary text-primary rounded-lg hover:bg-primary/10"
+          >
+            Load Demo Data
+          </button>
+        </div>
       </div>
     )
   }
 
   return (
-    <div className="space-y-6">
+    <div className="space-y-4">
       {/* Header */}
       <div className="flex justify-between items-center">
         <div>
-          <h2 className="text-3xl font-bold">Pairwise Comparison</h2>
-          <p className="text-muted-foreground mt-1">
-            Compare videos using a 7-point scale to build a lameness hierarchy
+          <h2 className="text-2xl font-bold">{t('pairwise.title')}</h2>
+          <p className="text-muted-foreground text-sm mt-1">
+            {t('pairwise.subtitle')}
           </p>
+          {demoMode && (
+            <div className="mt-2 flex items-center gap-2 flex-wrap">
+              <span className="px-3 py-1 bg-warning/20 text-warning rounded-full text-xs font-medium">
+                🎯 {selectedTask ? selectedTask.name : 'Demo'} — Pair {demoIndex + 1} / {demoPairs.length}
+              </span>
+              {selectedTask && (
+                <button
+                  onClick={handleBackToTasks}
+                  className="px-2.5 py-1 text-xs text-muted-foreground hover:text-foreground border border-border rounded-full transition-colors"
+                >
+                  ← Tasks
+                </button>
+              )}
+            </div>
+          )}
         </div>
-        <div className="flex items-center gap-4">
+        <div className="flex items-center gap-3 text-sm">
+          {!demoMode && (
+            <button
+              onClick={enableDemoMode}
+              className="px-3 py-1.5 border border-primary text-primary rounded-lg hover:bg-primary/10"
+            >
+              Load Demo Data
+            </button>
+          )}
           {stats && (
-            <div className="text-sm text-muted-foreground">
-              Progress: {stats.unique_pairs_compared} / {stats.total_possible_pairs} pairs
+            <div className="text-muted-foreground">
+              {t('common.progress')} {stats.unique_pairs_compared} / {stats.total_possible_pairs} {t('common.pairs')}
               ({(stats.completion_rate * 100).toFixed(1)}%)
             </div>
           )}
           <button
             onClick={() => setShowRanking(!showRanking)}
-            className="px-4 py-2 border rounded-lg hover:bg-accent"
+            className="px-3 py-1.5 border rounded-lg hover:bg-accent"
           >
-            {showRanking ? 'Hide Ranking' : 'Show Ranking'}
+            {t('pairwise.showRanking')}
           </button>
           <button
             onClick={generateShareUrl}
-            className="px-4 py-2 border rounded-lg hover:bg-accent"
+            className="px-3 py-1.5 border rounded-lg hover:bg-accent"
           >
-            Share
+            {t('pairwise.share')}
           </button>
           <button
-            onClick={() => {
-              localStorage.removeItem('pairwise_tutorial_complete')
-              setInTutorial(true)
-              setTutorialStep(0)
-              setTutorialScore(0)
-            }}
-            className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground"
+            onClick={() => navigate('/pairwise-tutorial')}
+            className="px-3 py-1.5 border border-primary text-primary rounded-lg hover:bg-primary/10 font-medium"
           >
-            Retake Tutorial
+            Tutorial
           </button>
         </div>
       </div>
@@ -557,127 +985,123 @@ export default function PairwiseReview() {
       )}
 
       {/* Main Comparison Area */}
-      {pair && (
+      {(pair || demoPair) && (
         <>
           {/* Videos Side by Side */}
-          <div className="grid grid-cols-2 gap-6">
-            {/* Video A */}
-            <div className="space-y-2">
-              <div className="text-center font-semibold text-lg">Video A</div>
+          <div className="grid grid-cols-2 gap-4">
+            {/* Left Cow */}
+            <div className="space-y-1">
+              <div className="text-center font-semibold">{t('pairwise.leftCow')}</div>
               <div className={`border-4 rounded-lg overflow-hidden transition-colors ${
                 selectedValue !== null && selectedValue < 0 ? 'border-red-500' : 'border-transparent'
               }`}>
                 <video
                   ref={video1Ref}
-                  src={videosApi.getStreamUrl(pair.video_id_1)}
+                  src={demoMode && demoPair ? demoPair.cow_L_URL : pair ? videosApi.getStreamUrl(pair.video_id_1) : ''}
                   className="w-full aspect-video bg-black"
                   loop
                   muted
+                  playsInline
+                  controls
+                  autoPlay={demoMode}
                 />
               </div>
             </div>
 
-            {/* Video B */}
-            <div className="space-y-2">
-              <div className="text-center font-semibold text-lg">Video B</div>
+            {/* Right Cow */}
+            <div className="space-y-1">
+              <div className="text-center font-semibold">{t('pairwise.rightCow')}</div>
               <div className={`border-4 rounded-lg overflow-hidden transition-colors ${
                 selectedValue !== null && selectedValue > 0 ? 'border-orange-500' : 'border-transparent'
               }`}>
                 <video
                   ref={video2Ref}
-                  src={videosApi.getStreamUrl(pair.video_id_2)}
+                  src={demoMode && demoPair ? demoPair.cow_R_URL : pair ? videosApi.getStreamUrl(pair.video_id_2) : ''}
                   className="w-full aspect-video bg-black"
                   loop
                   muted
+                  playsInline
+                  controls
+                  autoPlay={demoMode}
                 />
               </div>
             </div>
           </div>
 
           {/* Playback Controls */}
-          <div className="flex justify-center gap-4">
-            <button
-              onClick={restartVideos}
-              className="px-6 py-2 border border-border rounded-lg hover:bg-accent"
-            >
-              ↺ Restart
-            </button>
+          <div className="flex justify-center gap-3">
             <button
               onClick={togglePlayback}
-              className="px-6 py-2 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90"
+              className="px-5 py-1.5 bg-primary text-primary-foreground rounded-lg hover:bg-primary/90 text-sm"
             >
-              {isPlaying ? '⏸ Pause' : '▶ Play'}
+              {isPlaying ? `⏸ ${t('pairwise.pause')}` : `▶ ${t('pairwise.play')}`}
             </button>
-          </div>
-
-          {/* 7-Point Comparison Scale */}
-          <div className="space-y-4">
-            <label className="block text-center font-medium text-foreground">
-              Which cow appears more lame? (Keys 1-7)
-            </label>
-            <div className="flex gap-2 flex-wrap justify-center">
-              {COMPARISON_SCALE.map((option, idx) => (
-                <button
-                  key={option.value}
-                  onClick={() => setSelectedValue(option.value)}
-                  className={`px-4 py-3 rounded-lg text-sm font-medium transition-all flex-1 min-w-[120px] max-w-[160px] ${
-                    selectedValue === option.value
-                      ? `${option.color} text-white ring-2 ring-offset-2 ring-primary scale-105`
-                      : 'bg-muted hover:bg-accent text-foreground'
-                  }`}
-                >
-                  <div className="text-xs opacity-60 mb-1">Press {idx + 1}</div>
-                  {option.label}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Submit Button */}
-          <div className="flex justify-center">
             <button
-              onClick={handleSubmit}
-              disabled={selectedValue === null || submitting}
-              className="px-8 py-3 bg-success text-white rounded-lg font-medium hover:bg-success/90 disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={restartVideos}
+              className="px-5 py-1.5 border border-border rounded-lg hover:bg-accent text-sm"
             >
-              {submitting ? 'Submitting...' : 'Submit & Next Pair (Enter)'}
+              ↺ {t('pairwise.restart')}
             </button>
           </div>
 
-          {/* Lameness Indicators Guide */}
-          <div className="bg-muted/50 rounded-lg p-4 text-sm">
-            <h4 className="font-semibold mb-2">What to Look For:</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-              <div className="flex items-start gap-2">
-                <span className="text-red-500">●</span>
-                <div>
-                  <div className="font-medium">Arched Back</div>
-                  <div className="text-muted-foreground">Hunched posture while walking</div>
+          <>
+              {/* 7-Point Comparison Scale - Circular Buttons */}
+              <div className="space-y-2">
+                <label className="block text-center font-medium text-foreground text-sm">
+                  {t('pairwise.selectOption')}
+                </label>
+                <div className="flex items-center justify-center gap-10 py-3">
+                  {COMPARISON_SCALE.map((option, idx) => {
+                    const sizeClass =
+                      idx === 0 || idx === 6 ? 'w-14 h-14' :
+                      idx === 1 || idx === 5 ? 'w-12 h-12' :
+                      idx === 2 || idx === 4 ? 'w-10 h-10' :
+                      'w-8 h-8'
+
+                    const colorClass =
+                      selectedValue === option.value
+                        ? option.value < 0 ? 'bg-blue-600 border-blue-700' :
+                          option.value > 0 ? 'bg-orange-600 border-orange-700' :
+                          'bg-gray-500 border-gray-600'
+                        : option.value < 0 ? 'bg-blue-500/50 hover:bg-blue-500/70 border-blue-500/60' :
+                          option.value > 0 ? 'bg-orange-500/50 hover:bg-orange-500/70 border-orange-500/60' :
+                          'bg-gray-400/40 hover:bg-gray-400/60 border-gray-400/50'
+
+                    const showText = idx === 0 || idx === 6
+                    const labelText = idx === 0 ? 'Left cow much more lame' : idx === 6 ? 'Right cow much more lame' : ''
+
+                    return (
+                      <div key={option.value} className="flex flex-col items-center gap-1 flex-shrink-0">
+                        <span className={`text-xs mb-1 h-4 ${showText ? 'text-muted-foreground' : 'invisible'}`}>
+                          {showText ? labelText : 'placeholder'}
+                        </span>
+                        <button
+                          onClick={() => setSelectedValue(option.value)}
+                          className={`rounded-full ${sizeClass} ${colorClass} border-2 transition-all flex-shrink-0 ${
+                            selectedValue === option.value ? 'ring-3 ring-offset-2 ring-primary scale-110' : ''
+                          }`}
+                          title={option.label}
+                          style={{ aspectRatio: '1 / 1' }}
+                        >
+                          <span className="sr-only">{option.label}</span>
+                        </button>
+                      </div>
+                    )
+                  })}
                 </div>
               </div>
-              <div className="flex items-start gap-2">
-                <span className="text-orange-500">●</span>
-                <div>
-                  <div className="font-medium">Head Bobbing</div>
-                  <div className="text-muted-foreground">Up/down head movement</div>
-                </div>
+
+              {/* Submit Button */}
+              <div className="flex justify-center mt-3">
+                <button
+                  onClick={handleSubmit}
+                  disabled={selectedValue === null || submitting}
+                  className="px-8 py-2 bg-success text-white rounded-lg font-medium hover:bg-success/90 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {submitting ? 'Loading...' : t('pairwise.submit')}
+                </button>
               </div>
-              <div className="flex items-start gap-2">
-                <span className="text-yellow-500">●</span>
-                <div>
-                  <div className="font-medium">Uneven Stride</div>
-                  <div className="text-muted-foreground">Favoring one leg</div>
-                </div>
-              </div>
-              <div className="flex items-start gap-2">
-                <span className="text-blue-500">●</span>
-                <div>
-                  <div className="font-medium">Slow Movement</div>
-                  <div className="text-muted-foreground">Hesitant or cautious gait</div>
-                </div>
-              </div>
-            </div>
-          </div>
+            </>
 
           {/* Keyboard shortcuts */}
           <div className="text-center text-xs text-muted-foreground">

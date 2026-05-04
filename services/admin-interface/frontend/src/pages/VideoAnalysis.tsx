@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
 import { videosApi, analysisApi, trainingApi } from '@/api/client'
 import VideoPlayer from '@/components/VideoPlayer'
+import { getDemoCows } from '@/utils/demoData'
 
 interface DetectionFrame {
   frame: number
@@ -32,6 +33,37 @@ export default function VideoAnalysis() {
 
   const loadData = async () => {
     try {
+      // Check if this is a demo video
+      const demoCows = getDemoCows()
+      const demoCow = demoCows.find(c => c.id === videoId)
+      
+      if (demoCow) {
+        // Load demo data
+        setVideo({
+          video_id: demoCow.id,
+          filename: `cow_${demoCow.id}_demo.mp4`,
+          file_size: Math.floor(Math.random() * 50 + 10) * 1024 * 1024,
+          has_analysis: true,
+          has_annotated: true,
+          has_label: true,
+          label: demoCow.severity === 'severe' || demoCow.severity === 'moderate' ? 1 : 0,
+          storage_backend: 's3',
+          s3_url: demoCow.videoUrl,
+          metadata: {
+            duration: 8,
+            fps: 30,
+            frame_count: 240
+          }
+        })
+        setAnalysis({
+          final_prediction: demoCow.severity === 'severe' || demoCow.severity === 'moderate' ? 1 : 0,
+          final_probability: demoCow.severity === 'severe' ? 0.9 : demoCow.severity === 'moderate' ? 0.7 : demoCow.severity === 'mild' ? 0.4 : 0.2
+        })
+        setCurrentLabel(demoCow.severity === 'severe' || demoCow.severity === 'moderate' ? 1 : 0)
+        setLoading(false)
+        return
+      }
+      
       const [videoData, analysisData] = await Promise.all([
         videosApi.get(videoId!),
         analysisApi.getSummary(videoId!).catch(() => null),
